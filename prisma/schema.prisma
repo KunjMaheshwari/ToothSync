@@ -1,0 +1,159 @@
+generator client {
+ provider = "prisma-client-js"
+}
+
+datasource db {
+ provider = "sqlite"
+ url = env("DATABASE_URL")
+}
+
+model Doctor {
+ id String @id @default(cuid())
+ username String @unique
+ createdAt DateTime @default(now())
+}
+model Patient {
+ id String @id @default(cuid())
+ patientId String @unique
+ referenceId String? @unique
+ firstName String
+ lastName String
+ dateOfBirth DateTime?
+ gender String?
+ phone String @unique
+ email String? @unique
+ city String?
+ allergies String?
+ conditions String?
+ dentalHistory String?
+ consented Boolean @default(false)
+ registeredAt DateTime @default(now())
+ updatedAt DateTime @default(now()) @updatedAt
+ deletedAt DateTime?
+ appointments Appointment[]
+ treatments Treatment[]
+ prescriptions Prescription[]
+ invoices Invoice[]
+ followUps FollowUp[]
+ syncQueue SyncQueue[]
+ @@index([firstName,lastName])
+ @@index([registeredAt])
+}
+model Appointment {
+ id String @id @default(cuid())
+ patientId String
+ patient Patient @relation(fields:[patientId],references:[id])
+ startsAt DateTime
+ endsAt DateTime
+ type String
+ complaint String?
+ plannedTreatment String?
+ notes String?
+ status String @default("SCHEDULED")
+ createdAt DateTime @default(now())
+ updatedAt DateTime @updatedAt
+ treatments Treatment[]
+ @@index([startsAt])
+}
+model Treatment {
+ id String @id @default(cuid())
+ patientId String
+ patient Patient @relation(fields:[patientId],references:[id])
+ appointmentId String?
+ appointment Appointment? @relation(fields:[appointmentId],references:[id])
+ category String
+ procedure String
+ toothNumber String?
+ description String?
+ costPaise Int @default(0)
+ status String @default("PLANNED")
+ date DateTime @default(now())
+}
+model Prescription {
+ id String @id @default(cuid())
+ patientId String
+ patient Patient @relation(fields:[patientId],references:[id])
+ date DateTime @default(now())
+ notes String?
+ items PrescriptionItem[]
+}
+model PrescriptionItem {
+ id String @id @default(cuid())
+ prescriptionId String
+ prescription Prescription @relation(fields:[prescriptionId],references:[id],onDelete:Cascade)
+ medication String
+ dosage String
+ frequency String
+ duration String
+ instructions String?
+}
+model Invoice {
+ id String @id @default(cuid())
+ patientId String
+ patient Patient @relation(fields:[patientId],references:[id])
+ invoiceNumber String @unique
+ date DateTime @default(now())
+ discountPaise Int @default(0)
+ taxPaise Int @default(0)
+ totalPaise Int @default(0)
+ paidPaise Int @default(0)
+ status String @default("PENDING")
+ items InvoiceItem[]
+ payments Payment[]
+}
+model InvoiceItem {
+ id String @id @default(cuid())
+ invoiceId String
+ invoice Invoice @relation(fields:[invoiceId],references:[id],onDelete:Cascade)
+ description String
+ quantity Int @default(1)
+ unitPaise Int
+}
+model Payment {
+ id String @id @default(cuid())
+ invoiceId String
+ invoice Invoice @relation(fields:[invoiceId],references:[id])
+ amountPaise Int
+ method String
+ reference String?
+ notes String?
+ paidAt DateTime @default(now())
+}
+model FollowUp {
+ id String @id @default(cuid())
+ patientId String
+ patient Patient @relation(fields:[patientId],references:[id])
+ dueDate DateTime
+ reason String
+ notes String?
+ status String @default("PENDING")
+}
+model AuditLog {
+ id String @id @default(cuid())
+ action String
+ entity String
+ entityId String
+ createdAt DateTime @default(now())
+}
+model SyncQueue {
+ id String @id @default(cuid())
+ patientId String?
+ patient Patient? @relation(fields:[patientId],references:[id])
+ entity String
+ entityId String
+ operation String
+ payload String
+ status String @default("PENDING")
+ attempts Int @default(0)
+ nextAttemptAt DateTime @default(now())
+ lastError String?
+ updatedAt DateTime @default(now()) @updatedAt
+ @@unique([entity,entityId,operation])
+}
+model SyncMetadata {
+ id String @id @default(cuid())
+ entity String
+ entityId String
+ syncedAt DateTime?
+ @@unique([entity,entityId])
+}
