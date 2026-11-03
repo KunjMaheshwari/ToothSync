@@ -32,3 +32,4 @@
 - **TypeScript (`npx tsc --noEmit`)**: `0` errors.
 - **ESLint (`npm run lint`)**: `0` warnings or errors.
 - **Production Build (`npm run build`)**: Clean Next.js 15.5.28 production build.
+

@@ -56,3 +56,4 @@ All 13 screens and modals were rendered and measured across all 3 target viewpor
 
 1. **Browser Emulation vs. Physical Hardware**: All viewport checks (`402 × 874`, `820 × 1180`, `1440 × 900`) were performed using automated headless Chromium viewport emulation via Playwright on macOS, not on physical iPhone 18 Pro or iPad Air hardware. Safe-area inset CSS (`env(safe-area-inset-bottom)`) is included for iOS home-indicator clearance.
 2. **Data Tables on Narrow Mobile Screens (`402 × 874`)**: The 6-column **Patients** directory table and 7-column **Billing & Invoices** ledger table intentionally scroll horizontally inside their self-contained `.table-wrap` container (`overflow-x: auto; -webkit-overflow-scrolling: touch;`) on `402px` mobile screens so no financial columns or patient identifiers are hidden, while the page itself (`document.documentElement.scrollWidth === 402`) never overflows horizontally.
+
