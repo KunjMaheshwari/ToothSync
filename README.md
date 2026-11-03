@@ -2,7 +2,7 @@
 
 # Doctor Kinjal Maheshwari's Patient Tracker
 
-**A Local-First, Apple-Inspired Clinical & Financial Operating System for Modern Dental Practice Management**
+**A Local-First, Clinical & Financial Operating System for Modern Dental Practice Management**
 
 [![Next.js 15](https://img.shields.io/badge/Next.js-15.5-000000?style=flat-square&logo=next.js&logoColor=white)](https://nextjs.org/)
 [![React 19](https://img.shields.io/badge/React-19.1-0071E3?style=flat-square&logo=react&logoColor=white)](https://react.dev/)
