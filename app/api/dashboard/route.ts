@@ -55,13 +55,16 @@ export async function GET() {
     db.invoice.aggregate({
       where: {
         patient: { deletedAt: null },
-        status: { not: "PAID" },
+        status: { in: ["PENDING", "PARTIAL"] },
       },
       _sum: { totalPaise: true, paidPaise: true },
     }),
     db.invoice.aggregate({
-      where: { patient: { deletedAt: null } },
-      _sum: { totalPaise: true, paidPaise: true, discountPaise: true },
+      where: {
+        patient: { deletedAt: null },
+        status: { not: "CANCELLED" },
+      },
+      _sum: { totalPaise: true, paidPaise: true, discountPaise: true, taxPaise: true },
       _count: { id: true },
     }),
     db.followUp.count({
@@ -103,7 +106,7 @@ export async function GET() {
     db.syncQueue.count({ where: { status: "FAILED" } }),
     db.syncQueue.count({ where: { status: "SYNCED" } }),
     db.syncMetadata.findFirst({ orderBy: { syncedAt: "desc" } }),
-    db.auditLog.findMany({ orderBy: { createdAt: "desc" }, take: 12 }),
+    db.auditLog.findMany({ orderBy: { createdAt: "desc" }, take: 15 }),
   ]);
 
   const pendingPaise = Math.max(
@@ -128,6 +131,7 @@ export async function GET() {
         totalBilledPaise: allInvoiceAgg._sum.totalPaise || 0,
         totalCollectedPaise: allInvoiceAgg._sum.paidPaise || 0,
         totalDiscountPaise: allInvoiceAgg._sum.discountPaise || 0,
+        totalTaxPaise: allInvoiceAgg._sum.taxPaise || 0,
         outstandingPaise: pendingPaise,
         invoicesCount: allInvoiceAgg._count.id || 0,
       },

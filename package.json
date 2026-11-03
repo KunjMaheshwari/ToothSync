@@ -13,6 +13,7 @@
     "db:migrate": "prisma migrate dev",
     "db:seed": "tsx prisma/seed.ts",
     "qa:sheets": "node --env-file=.env --import tsx scripts/sheets-e2e.ts",
+    "qa:reconcile": "node --env-file=.env --import tsx scripts/reconcile-sheets.ts",
     "migrate:patient-sheet": "node --env-file=.env --import tsx scripts/migrate-patient-sheet.ts"
   },
   "dependencies": {

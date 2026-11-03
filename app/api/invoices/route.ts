@@ -3,6 +3,7 @@ import { db } from "@/lib/db";
 import { logAudit, protectedRead, protectedWrite, queueRecord } from "@/lib/api";
 import { readJson } from "@/lib/security";
 import { invoiceSchema } from "@/lib/validation";
+import { calculateInvoiceTotals } from "@/lib/finance";
 import { randomInt } from "crypto";
 
 function number() {
@@ -44,15 +45,21 @@ export async function POST(req: Request) {
   }
 
   const d = parsed.data;
-  if (!(await db.patient.findFirst({ where: { id: d.patientId, deletedAt: null } }))) {
+  if (
+    !(await db.patient.findFirst({ where: { id: d.patientId, deletedAt: null } }))
+  ) {
     return NextResponse.json({ error: "Patient not found." }, { status: 404 });
   }
 
-  const lineTotal = d.items.reduce(
-    (sum, item) => sum + item.quantity * item.unitPaise,
-    0
-  );
-  const total = Math.max(0, lineTotal + d.taxPaise - d.discountPaise);
+  let totals;
+  try {
+    totals = calculateInvoiceTotals(d);
+  } catch (err) {
+    return NextResponse.json(
+      { error: err instanceof Error ? err.message : "Invalid invoice totals." },
+      { status: 400 }
+    );
+  }
 
   for (let tries = 0; tries < 3; tries++) {
     try {
@@ -61,11 +68,18 @@ export async function POST(req: Request) {
           data: {
             patientId: d.patientId,
             invoiceNumber: number(),
-            discountPaise: d.discountPaise,
-            taxPaise: d.taxPaise,
-            totalPaise: total,
-            status: total === 0 ? "PAID" : "PENDING",
-            items: { create: d.items },
+            discountPaise: totals.discountPaise,
+            taxPaise: totals.taxPaise,
+            totalPaise: totals.totalPaise,
+            paidPaise: 0,
+            status: totals.initialStatus,
+            items: {
+              create: d.items.map((item) => ({
+                description: item.description,
+                quantity: item.quantity,
+                unitPaise: item.unitPaise,
+              })),
+            },
           },
           include: {
             patient: true,
@@ -87,6 +101,7 @@ export async function POST(req: Request) {
       }
     }
   }
+
   return NextResponse.json(
     { error: "Unable to create invoice. Please retry." },
     { status: 503 }

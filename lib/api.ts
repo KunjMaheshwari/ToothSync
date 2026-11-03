@@ -42,7 +42,14 @@ export function queueRecord(
 
 export function logAudit(
   tx: { auditLog: { create: any } },
-  action: "CREATE" | "UPDATE" | "ARCHIVE" | "PAYMENT" | "SYNC",
+  action:
+    | "CREATE"
+    | "UPDATE"
+    | "ARCHIVE"
+    | "PAYMENT"
+    | "SYNC"
+    | "LOGIN"
+    | "LOGOUT",
   entity: string,
   entityId: string
 ) {

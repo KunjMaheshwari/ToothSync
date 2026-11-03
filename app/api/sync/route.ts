@@ -5,6 +5,16 @@ import { syncRecordToSheets } from "@/lib/sheets";
 import { loadSyncRecord } from "@/lib/sync-record";
 import { csrfFailure, sameOrigin } from "@/lib/security";
 
+const ENTITY_PRIORITY: Record<string, number> = {
+  Patient: 1,
+  Appointment: 2,
+  Treatment: 3,
+  Prescription: 4,
+  Invoice: 5,
+  Payment: 6,
+  FollowUp: 7,
+};
+
 export async function GET() {
   if (!(await isAuthenticated())) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -16,7 +26,7 @@ export async function GET() {
     db.syncMetadata.findFirst({ orderBy: { syncedAt: "desc" } }),
     db.syncQueue.findMany({
       orderBy: { updatedAt: "desc" },
-      take: 15,
+      take: 20,
     }),
   ]);
   const configured = Boolean(
@@ -53,13 +63,21 @@ export async function POST(req: Request) {
     },
   });
 
-  const jobs = await db.syncQueue.findMany({
+  const rawJobs = await db.syncQueue.findMany({
     where: {
       status: { in: ["PENDING", "FAILED"] },
       nextAttemptAt: { lte: now },
     },
     take: 50,
     orderBy: { nextAttemptAt: "asc" },
+  });
+
+  // Sort by relational dependency priority first (Patient -> Invoice -> Payment)
+  const jobs = [...rawJobs].sort((a, b) => {
+    const pa = ENTITY_PRIORITY[a.entity] ?? 99;
+    const pb = ENTITY_PRIORITY[b.entity] ?? 99;
+    if (pa !== pb) return pa - pb;
+    return a.nextAttemptAt.getTime() - b.nextAttemptAt.getTime();
   });
 
   let synced = 0;
@@ -76,12 +94,16 @@ export async function POST(req: Request) {
     try {
       const record = await loadSyncRecord(job.entity, job.entityId);
       await syncRecordToSheets(job.entity, record);
+
+      // Stale-data guard: Only transition SYNCING -> SYNCED.
+      // If a concurrent local write updated the entity while SYNCING, queueRecord
+      // already flipped status back to PENDING, so updateMany will preserve PENDING.
       await db.$transaction([
-        db.syncQueue.update({
-          where: { id: job.id },
+        db.syncQueue.updateMany({
+          where: { id: job.id, status: "SYNCING" },
           data: {
             status: "SYNCED",
-            attempts: { increment: 1 },
+            attempts: job.attempts + 1,
             lastError: null,
           },
         }),
@@ -96,6 +118,13 @@ export async function POST(req: Request) {
           },
           update: { syncedAt: new Date() },
         }),
+        db.auditLog.create({
+          data: {
+            action: "SYNC",
+            entity: job.entity,
+            entityId: job.entityId,
+          },
+        }),
       ]);
       synced++;
     } catch (e) {
@@ -106,8 +135,8 @@ export async function POST(req: Request) {
           ? e.message.slice(0, 240)
           : "Synchronization failed. Check configuration and retry.";
       lastError = errMsg;
-      await db.syncQueue.update({
-        where: { id: job.id },
+      await db.syncQueue.updateMany({
+        where: { id: job.id, status: "SYNCING" },
         data: {
           status: "FAILED",
           attempts,

@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Activity,
   AlertCircle,
-  ArrowUpRight,
+  Ban,
   CalendarDays,
   Check,
   CheckCircle2,
@@ -13,8 +13,6 @@ import {
   ClipboardList,
   Clock,
   CreditCard,
-  Database,
-  Edit3,
   Eye,
   FileText,
   Home,
@@ -22,22 +20,25 @@ import {
   LogOut,
   Moon,
   MoreHorizontal,
-  Pill,
   Plus,
   Printer,
+  Receipt,
   RefreshCw,
   Search,
   Settings,
   ShieldCheck,
-  Sparkles,
   Stethoscope,
   Sun,
   Trash2,
-  UserCheck,
   Users,
   X,
 } from "lucide-react";
 import { parseRupeesToPaise } from "@/lib/validation";
+import {
+  auditInvoiceRecord,
+  calculateInvoiceTotals,
+  formatINR,
+} from "@/lib/finance";
 
 type Dash = {
   patients: number;
@@ -55,6 +56,7 @@ type Dash = {
     totalBilledPaise: number;
     totalCollectedPaise: number;
     totalDiscountPaise: number;
+    totalTaxPaise?: number;
     outstandingPaise: number;
     invoicesCount: number;
   };
@@ -85,12 +87,7 @@ const nav = [
   ["Settings", Settings],
 ] as const;
 
-const money = (paise: number) =>
-  new Intl.NumberFormat("en-IN", {
-    style: "currency",
-    currency: "INR",
-    maximumFractionDigits: 2,
-  }).format((paise || 0) / 100);
+const money = (paise: number) => formatINR(paise);
 
 function toLocalDatetimeInputValue(date = new Date()) {
   const offsetMs = date.getTimezoneOffset() * 60_000;
@@ -159,7 +156,6 @@ export default function ClinicApp() {
   const [message, setMessage] = useState("");
   const [syncing, setSyncing] = useState(false);
 
-  // Pre-selected patient context when jumping from Patient 360° or Treatments to another module
   const [selectedPatientId, setSelectedPatientId] = useState<string>("");
   const [billingDraft, setBillingDraft] = useState<{
     patientId: string;
@@ -167,16 +163,17 @@ export default function ClinicApp() {
     amountRupees: string;
   } | null>(null);
 
-  // Patient 360° modal state
   const [activePatientId, setActivePatientId] = useState<string | null>(null);
-  const [activePatientDetail, setActivePatientDetail] = useState<any | null>(null);
+  const [activePatientDetail, setActivePatientDetail] = useState<any | null>(
+    null
+  );
   const [loadingPatientDetail, setLoadingPatientDetail] = useState(false);
-  const [patientModalTab, setPatientModalTab] = useState<"overview" | "edit">("overview");
+  const [patientModalTab, setPatientModalTab] = useState<"overview" | "edit">(
+    "overview"
+  );
 
-  // Prescription print preview modal
   const [printPrescription, setPrintPrescription] = useState<any | null>(null);
 
-  // Toast stack
   const [toasts, setToasts] = useState<ToastItem[]>([]);
   const toastCounter = useRef(0);
   const searchRequest = useRef(0);
@@ -379,7 +376,12 @@ export default function ClinicApp() {
   function Dashboard() {
     const metrics = [
       ["Total patients", dash?.patients ?? "—", Users, "Patients"],
-      ["Today’s appointments", dash?.today ?? "—", CalendarDays, "Appointments"],
+      [
+        "Today’s appointments",
+        dash?.today ?? "—",
+        CalendarDays,
+        "Appointments",
+      ],
       ["Completed", dash?.completed ?? "—", CheckCircle2, "Appointments"],
       ["Upcoming", dash?.upcoming ?? "—", Clock, "Appointments"],
       [
@@ -460,7 +462,8 @@ export default function ClinicApp() {
                 </h2>
                 {showingUpcomingFallback && (
                   <p className="sub" style={{ fontSize: 12.5 }}>
-                    No visits remaining today · showing next scheduled appointments
+                    No visits remaining today · showing next scheduled
+                    appointments
                   </p>
                 )}
               </div>
@@ -518,7 +521,9 @@ export default function ClinicApp() {
                       }}
                     >
                       <span
-                        className={`status ${String(a.status || "").toLowerCase()}`}
+                        className={`status ${String(
+                          a.status || ""
+                        ).toLowerCase()}`}
                       >
                         {a.status}
                       </span>
@@ -633,63 +638,6 @@ export default function ClinicApp() {
                 {message}
               </p>
             )}
-
-            {dash?.dueFollowUps && dash.dueFollowUps.length > 0 && (
-              <div
-                style={{
-                  marginTop: 20,
-                  paddingTop: 16,
-                  borderTop: "1px solid var(--line)",
-                }}
-              >
-                <div
-                  style={{
-                    display: "flex",
-                    justifyContent: "space-between",
-                    alignItems: "center",
-                    marginBottom: 10,
-                  }}
-                >
-                  <b style={{ fontSize: 13.5 }}>Pending follow-ups</b>
-                  <button
-                    className="btn sm subtle"
-                    onClick={() => setPage("Follow-ups")}
-                  >
-                    Manage
-                  </button>
-                </div>
-                <div style={{ display: "grid", gap: 8 }}>
-                  {dash.dueFollowUps.slice(0, 3).map((f: any) => (
-                    <div
-                      key={f.id}
-                      style={{
-                        display: "flex",
-                        justifyContent: "space-between",
-                        alignItems: "center",
-                        padding: "8px 11px",
-                        borderRadius: 10,
-                        background: "var(--surface-subtle)",
-                        border: "1px solid var(--line)",
-                        fontSize: 13,
-                      }}
-                    >
-                      <div>
-                        <b>
-                          {f.patient?.firstName} {f.patient?.lastName}
-                        </b>{" "}
-                        <span className="sub">· {f.reason}</span>
-                      </div>
-                      <span className="time">
-                        {new Date(f.dueDate).toLocaleDateString("en-IN", {
-                          day: "numeric",
-                          month: "short",
-                        })}
-                      </span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
           </section>
         </div>
       </>
@@ -764,7 +712,7 @@ export default function ClinicApp() {
                 style={{ color: "var(--blue)" }}
               />
             )}
-            <span className="sub" style={{ fontSize: 12.5 }}>
+            <span className="sub" style={{ fontSize: 13 }}>
               {patients.length} {patients.length === 1 ? "patient" : "patients"}
             </span>
           </div>
@@ -802,7 +750,9 @@ export default function ClinicApp() {
                         onClick={() => openPatientDetail(p.id)}
                       >
                         <td>
-                          <div style={{ display: "flex", alignItems: "center" }}>
+                          <div
+                            style={{ display: "flex", alignItems: "center" }}
+                          >
                             <span className="avatar">
                               {p.firstName?.[0]}
                               {p.lastName?.[0]}
@@ -821,7 +771,8 @@ export default function ClinicApp() {
                         <td>
                           <span
                             style={{
-                              fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
+                              fontFamily:
+                                "ui-monospace, SFMono-Regular, Menlo, monospace",
                               fontSize: 12.5,
                               fontWeight: 600,
                             }}
@@ -829,12 +780,12 @@ export default function ClinicApp() {
                             {p.patientId}
                           </span>
                           {p.referenceId && (
-                            <div className="sub" style={{ fontSize: 11.5 }}>
+                            <div className="sub" style={{ fontSize: 12 }}>
                               Ref: {p.referenceId}
                             </div>
                           )}
                         </td>
-                        <td>{p.phone}</td>
+                        <td className="tabular">{p.phone}</td>
                         <td>
                           {hasAllergy ? (
                             <span className="status overdue">
@@ -848,12 +799,12 @@ export default function ClinicApp() {
                               {p.conditions}
                             </span>
                           ) : (
-                            <span className="sub" style={{ fontSize: 12.5 }}>
+                            <span className="sub" style={{ fontSize: 13 }}>
                               None noted
                             </span>
                           )}
                         </td>
-                        <td>
+                        <td className="tabular">
                           {new Date(p.registeredAt).toLocaleDateString("en-IN")}
                         </td>
                         <td
@@ -977,11 +928,7 @@ export default function ClinicApp() {
             </label>
             <label className="field">
               Phone number *
-              <input
-                name="phone"
-                placeholder="+91 98765 43210"
-                required
-              />
+              <input name="phone" placeholder="+91 98765 43210" required />
             </label>
             <label className="field">
               Email
@@ -1390,7 +1337,10 @@ export default function ClinicApp() {
 
             <div className="schedule">
               {loadingList ? (
-                <div className="empty">Loading schedule…</div>
+                <div style={{ display: "grid", gap: 12, padding: "12px 0" }}>
+                  <div className="skeleton" style={{ height: 48 }} />
+                  <div className="skeleton" style={{ height: 48 }} />
+                </div>
               ) : filteredAppointments.length ? (
                 filteredAppointments.map((a) => (
                   <div className="appointment" key={a.id}>
@@ -1706,7 +1656,10 @@ export default function ClinicApp() {
 
             <div className="schedule">
               {loading ? (
-                <div className="empty">Loading treatments…</div>
+                <div style={{ display: "grid", gap: 12, padding: "12px 0" }}>
+                  <div className="skeleton" style={{ height: 48 }} />
+                  <div className="skeleton" style={{ height: 48 }} />
+                </div>
               ) : filtered.length ? (
                 filtered.map((t) => (
                   <div className="appointment" key={t.id}>
@@ -1716,7 +1669,7 @@ export default function ClinicApp() {
                         month: "short",
                       })}
                       <br />
-                      <b>{money(t.costPaise)}</b>
+                      <b className="tabular">{money(t.costPaise)}</b>
                     </span>
                     <div
                       style={{ cursor: "pointer" }}
@@ -1963,7 +1916,10 @@ export default function ClinicApp() {
             </div>
 
             <div style={{ marginBottom: 16 }}>
-              <span className="field-hint" style={{ display: "block", marginBottom: 6 }}>
+              <span
+                className="field-hint"
+                style={{ display: "block", marginBottom: 6 }}
+              >
                 Quick-fill common dental medications:
               </span>
               <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
@@ -2137,7 +2093,10 @@ export default function ClinicApp() {
             <h2>Issued prescriptions</h2>
             <div className="schedule">
               {loading ? (
-                <div className="empty">Loading prescriptions…</div>
+                <div style={{ display: "grid", gap: 12, padding: "12px 0" }}>
+                  <div className="skeleton" style={{ height: 48 }} />
+                  <div className="skeleton" style={{ height: 48 }} />
+                </div>
               ) : prescriptions.length ? (
                 prescriptions.map((rx) => (
                   <div className="appointment" key={rx.id}>
@@ -2202,8 +2161,12 @@ export default function ClinicApp() {
     const [invPatientId, setInvPatientId] = useState(
       billingDraft?.patientId || selectedPatientId || ""
     );
-    const [discountRupees, setDiscountRupees] = useState("0");
-    const [taxRupees, setTaxRupees] = useState("0");
+    const [discountMode, setDiscountMode] = useState<"FIXED" | "PERCENT">(
+      "FIXED"
+    );
+    const [discountInput, setDiscountInput] = useState("0");
+    const [taxMode, setTaxMode] = useState<"FIXED" | "PERCENT">("FIXED");
+    const [taxInput, setTaxInput] = useState("0");
     const [lineItems, setLineItems] = useState([
       {
         description: billingDraft?.description || "",
@@ -2220,8 +2183,12 @@ export default function ClinicApp() {
     >("UPI");
     const [paymentReference, setPaymentReference] = useState("");
     const [paymentNotes, setPaymentNotes] = useState("");
+    const [paymentIdempotencyKey, setPaymentIdempotencyKey] = useState("");
     const [recordingPayment, setRecordingPayment] = useState(false);
     const [paymentError, setPaymentError] = useState("");
+
+    // Invoice Detail & Payment History Modal State
+    const [inspectInvoice, setInspectInvoice] = useState<any | null>(null);
 
     const fetchInvoices = useCallback(async () => {
       setLoading(true);
@@ -2237,17 +2204,69 @@ export default function ClinicApp() {
       fetchInvoices();
     }, [fetchInvoices]);
 
-    const liveTotals = useMemo(() => {
-      const subtotalPaise = lineItems.reduce((sum, item) => {
-        const unit = parseRupeesToPaise(item.amountRupees || "0") || 0;
-        const qty = Math.max(1, Number(item.quantity) || 1);
-        return sum + unit * qty;
-      }, 0);
-      const discPaise = parseRupeesToPaise(discountRupees || "0") || 0;
-      const txPaise = parseRupeesToPaise(taxRupees || "0") || 0;
-      const netPaise = Math.max(0, subtotalPaise + txPaise - discPaise);
-      return { subtotalPaise, discPaise, txPaise, netPaise };
-    }, [lineItems, discountRupees, taxRupees]);
+    const liveCalculation = useMemo(() => {
+      try {
+        const items = lineItems.map((it) => ({
+          quantity: Math.max(1, Math.trunc(Number(it.quantity) || 1)),
+          unitPaise: parseRupeesToPaise(it.amountRupees || "0") ?? 0,
+        }));
+        const discPercent =
+          discountMode === "PERCENT" ? Number(discountInput || 0) : undefined;
+        const discPaise =
+          discountMode === "FIXED"
+            ? parseRupeesToPaise(discountInput || "0") ?? 0
+            : undefined;
+        const txPercent =
+          taxMode === "PERCENT" ? Number(taxInput || 0) : undefined;
+        const txPaise =
+          taxMode === "FIXED"
+            ? parseRupeesToPaise(taxInput || "0") ?? 0
+            : undefined;
+
+        const res = calculateInvoiceTotals({
+          items,
+          discountPaise: discPaise,
+          discountPercent: discPercent,
+          taxPaise: txPaise,
+          taxPercent: txPercent,
+        });
+        return { ...res, error: null };
+      } catch (err) {
+        const fallbackSub = lineItems.reduce(
+          (s, it) =>
+            s +
+            Math.max(1, Number(it.quantity) || 1) *
+              (parseRupeesToPaise(it.amountRupees || "0") ?? 0),
+          0
+        );
+        return {
+          subtotalPaise: fallbackSub,
+          discountPaise: 0,
+          taxPaise: 0,
+          totalPaise: fallbackSub,
+          initialStatus: "PENDING" as const,
+          error: err instanceof Error ? err.message : "Invalid calculation",
+        };
+      }
+    }, [lineItems, discountMode, discountInput, taxMode, taxInput]);
+
+    // Authoritative ledger totals across all non-cancelled invoices
+    const ledgerMetrics = useMemo(() => {
+      let totalBilled = 0;
+      let totalPaid = 0;
+      let totalOutstanding = 0;
+      let totalDiscounts = 0;
+
+      for (const inv of invoices) {
+        if (inv.status === "CANCELLED") continue;
+        const audit = auditInvoiceRecord(inv);
+        totalBilled += audit.totalPaise;
+        totalPaid += audit.paidPaise;
+        totalOutstanding += audit.outstandingPaise;
+        totalDiscounts += audit.discountPaise;
+      }
+      return { totalBilled, totalPaid, totalOutstanding, totalDiscounts };
+    }, [invoices]);
 
     async function submitInvoice(e: React.FormEvent<HTMLFormElement>) {
       e.preventDefault();
@@ -2257,17 +2276,6 @@ export default function ClinicApp() {
 
       const f = new FormData(e.currentTarget);
       const patientId = String(f.get("patientId") || invPatientId || "");
-      const discPaise = parseRupeesToPaise(
-        String(f.get("discount") ?? discountRupees)
-      );
-      const txPaise = parseRupeesToPaise(String(f.get("tax") ?? taxRupees));
-
-      if (discPaise === null || txPaise === null) {
-        setIsError(true);
-        setNotice("Invalid discount or tax amount.");
-        setSaving(false);
-        return;
-      }
 
       const parsedItems = lineItems.map((it, idx) => {
         const desc =
@@ -2292,29 +2300,44 @@ export default function ClinicApp() {
 
       if (parsedItems.some((i) => i.unitPaise < 0 || !i.description.trim())) {
         setIsError(true);
-        setNotice("Please enter valid descriptions and amounts in ₹.");
+        setNotice("Please enter valid descriptions and unit amounts in ₹.");
         setSaving(false);
         return;
+      }
+
+      if (liveCalculation.error) {
+        setIsError(true);
+        setNotice(liveCalculation.error);
+        setSaving(false);
+        return;
+      }
+
+      const payload: Record<string, unknown> = {
+        patientId,
+        discountPaise: liveCalculation.discountPaise,
+        taxPaise: liveCalculation.taxPaise,
+        items: parsedItems,
+      };
+      if (discountMode === "PERCENT") {
+        payload.discountPercent = Number(discountInput || 0);
+      }
+      if (taxMode === "PERCENT") {
+        payload.taxPercent = Number(taxInput || 0);
       }
 
       try {
         const r = await fetch("/api/invoices", {
           method: "POST",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify({
-            patientId,
-            discountPaise: discPaise,
-            taxPaise: txPaise,
-            items: parsedItems,
-          }),
+          body: JSON.stringify(payload),
         });
         const result = await r.json().catch(() => ({}));
         if (!r.ok) throw new Error(result.error || "Unable to create invoice.");
         setInvoices((prev) => [result, ...prev]);
         setBillingDraft(null);
         setLineItems([{ description: "", quantity: 1, amountRupees: "" }]);
-        setDiscountRupees("0");
-        setTaxRupees("0");
+        setDiscountInput("0");
+        setTaxInput("0");
         const msg = `Invoice ${result.invoiceNumber} saved locally and queued for sync.`;
         setNotice(msg);
         pushToast(msg);
@@ -2331,12 +2354,17 @@ export default function ClinicApp() {
     }
 
     function openPaymentModal(invoice: any) {
-      const remainingPaise = Math.max(0, invoice.totalPaise - invoice.paidPaise);
+      const summary = auditInvoiceRecord(invoice);
       setPaymentInvoice(invoice);
-      setPaymentAmountRupees(String(remainingPaise / 100));
+      setPaymentAmountRupees((summary.outstandingPaise / 100).toFixed(2));
       setPaymentMethod("UPI");
       setPaymentReference("");
       setPaymentNotes("");
+      setPaymentIdempotencyKey(
+        `pay-${invoice.id}-${Date.now()}-${Math.random()
+          .toString(36)
+          .slice(2, 8)}`
+      );
       setPaymentError("");
     }
 
@@ -2347,8 +2375,8 @@ export default function ClinicApp() {
       setPaymentError("");
 
       const amountPaise = parseRupeesToPaise(paymentAmountRupees);
-      if (!amountPaise || amountPaise <= 0) {
-        setPaymentError("Enter a valid payment amount greater than ₹0.");
+      if (amountPaise === null || amountPaise <= 0) {
+        setPaymentError("Enter a valid payment amount greater than ₹0.00.");
         setRecordingPayment(false);
         return;
       }
@@ -2356,12 +2384,16 @@ export default function ClinicApp() {
       try {
         const r = await fetch(`/api/invoices/${paymentInvoice.id}/payments`, {
           method: "POST",
-          headers: { "content-type": "application/json" },
+          headers: {
+            "content-type": "application/json",
+            "x-idempotency-key": paymentIdempotencyKey,
+          },
           body: JSON.stringify({
             amountPaise,
             method: paymentMethod,
             reference: paymentReference.trim() || undefined,
             notes: paymentNotes.trim() || undefined,
+            idempotencyKey: paymentIdempotencyKey,
           }),
         });
         const result = await r.json().catch(() => ({}));
@@ -2381,6 +2413,27 @@ export default function ClinicApp() {
       }
     }
 
+    async function handleCancelInvoice(invoice: any) {
+      const r = await fetch(`/api/invoices/${invoice.id}`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ status: "CANCELLED" }),
+      });
+      const payload = await r.json().catch(() => ({}));
+      if (r.ok) {
+        setInvoices((prev) =>
+          prev.map((inv) => (inv.id === invoice.id ? payload : inv))
+        );
+        if (inspectInvoice?.id === invoice.id) {
+          setInspectInvoice(payload);
+        }
+        pushToast(`Invoice ${invoice.invoiceNumber} cancelled.`);
+        refreshDashboard();
+      } else {
+        pushToast(payload.error || "Unable to cancel invoice.", "error");
+      }
+    }
+
     const filteredInvoices = invoices.filter((inv) =>
       statusFilter === "ALL" ? true : inv.status === statusFilter
     );
@@ -2389,10 +2442,61 @@ export default function ClinicApp() {
       <>
         <Header
           title="Billing & Invoices"
-          subtitle="Create itemized clinical invoices and record UPI, cash, card, or bank transfer payments."
+          subtitle="Authoritative integer-paise billing, payment history, and balance tracking."
         />
 
-        <div className="grid">
+        <div className="finance-strip">
+          <div className="metric">
+            <div className="label">
+              <span>Total Billed</span>
+              <span className="label-icon">
+                <Receipt size={15} />
+              </span>
+            </div>
+            <b className="tabular">{money(ledgerMetrics.totalBilled)}</b>
+          </div>
+          <div className="metric">
+            <div className="label">
+              <span>Amount Paid</span>
+              <span className="label-icon">
+                <CheckCircle2 size={15} />
+              </span>
+            </div>
+            <b className="tabular" style={{ color: "var(--green)" }}>
+              {money(ledgerMetrics.totalPaid)}
+            </b>
+          </div>
+          <div className="metric">
+            <div className="label">
+              <span>Remaining Balance</span>
+              <span className="label-icon">
+                <CreditCard size={15} />
+              </span>
+            </div>
+            <b
+              className="tabular"
+              style={{
+                color:
+                  ledgerMetrics.totalOutstanding > 0
+                    ? "var(--amber)"
+                    : "var(--ink)",
+              }}
+            >
+              {money(ledgerMetrics.totalOutstanding)}
+            </b>
+          </div>
+          <div className="metric">
+            <div className="label">
+              <span>Discounts Granted</span>
+              <span className="label-icon">
+                <CircleDollarSign size={15} />
+              </span>
+            </div>
+            <b className="tabular">{money(ledgerMetrics.totalDiscounts)}</b>
+          </div>
+        </div>
+
+        <div className="grid-billing">
           <form className="card" onSubmit={submitInvoice}>
             <div className="card-header">
               <h2>New Invoice</h2>
@@ -2406,7 +2510,7 @@ export default function ClinicApp() {
                   ])
                 }
               >
-                <Plus size={14} /> Add line item
+                <Plus size={14} /> Add treatment line
               </button>
             </div>
 
@@ -2430,137 +2534,220 @@ export default function ClinicApp() {
             </div>
 
             <div style={{ display: "grid", gap: 12, marginBottom: 16 }}>
-              {lineItems.map((item, idx) => (
-                <div
-                  key={idx}
-                  style={{
-                    padding: 14,
-                    borderRadius: 14,
-                    border: "1px solid var(--line)",
-                    background: "var(--surface-subtle)",
-                  }}
-                >
-                  <div className="form-grid">
-                    <label className="field" style={{ gridColumn: "1 / -1" }}>
-                      Charge description *
-                      <input
-                        name={idx === 0 ? "description" : undefined}
-                        value={item.description}
-                        onChange={(e) =>
-                          setLineItems((prev) =>
-                            prev.map((it, i) =>
-                              i === idx
-                                ? { ...it, description: e.target.value }
-                                : it
+              {lineItems.map((item, idx) => {
+                const linePaise =
+                  Math.max(1, Number(item.quantity) || 1) *
+                  (parseRupeesToPaise(item.amountRupees || "0") ?? 0);
+                return (
+                  <div
+                    key={idx}
+                    style={{
+                      padding: 14,
+                      borderRadius: 14,
+                      border: "1px solid var(--line)",
+                      background: "var(--surface-subtle)",
+                    }}
+                  >
+                    <div className="form-grid">
+                      <label
+                        className="field"
+                        style={{ gridColumn: "1 / -1" }}
+                      >
+                        Charge description *
+                        <input
+                          name={idx === 0 ? "description" : undefined}
+                          value={item.description}
+                          onChange={(e) =>
+                            setLineItems((prev) =>
+                              prev.map((it, i) =>
+                                i === idx
+                                  ? { ...it, description: e.target.value }
+                                  : it
+                              )
                             )
-                          )
-                        }
-                        placeholder="e.g. Root Canal Treatment (#16) / Ultrasonic Scaling"
-                        required
-                      />
-                    </label>
-                    <label className="field">
-                      Quantity *
-                      <input
-                        name={idx === 0 ? "quantity" : undefined}
-                        type="number"
-                        min="1"
-                        max="100"
-                        value={item.quantity}
-                        onChange={(e) =>
-                          setLineItems((prev) =>
-                            prev.map((it, i) =>
-                              i === idx
-                                ? { ...it, quantity: Number(e.target.value) }
-                                : it
+                          }
+                          placeholder="e.g. Root Canal Treatment (#16) / Ultrasonic Scaling"
+                          required
+                        />
+                      </label>
+                      <label className="field">
+                        Quantity *
+                        <input
+                          name={idx === 0 ? "quantity" : undefined}
+                          type="number"
+                          min="1"
+                          max="100"
+                          value={item.quantity}
+                          onChange={(e) =>
+                            setLineItems((prev) =>
+                              prev.map((it, i) =>
+                                i === idx
+                                  ? { ...it, quantity: Number(e.target.value) }
+                                  : it
+                              )
                             )
-                          )
-                        }
-                        required
-                      />
-                    </label>
-                    <label className="field">
-                      Unit Amount (₹) *
-                      <input
-                        name={idx === 0 ? "amount" : undefined}
-                        inputMode="decimal"
-                        value={item.amountRupees}
-                        onChange={(e) =>
-                          setLineItems((prev) =>
-                            prev.map((it, i) =>
-                              i === idx
-                                ? { ...it, amountRupees: e.target.value }
-                                : it
+                          }
+                          required
+                        />
+                      </label>
+                      <label className="field">
+                        Unit Price (₹) *
+                        <input
+                          name={idx === 0 ? "amount" : undefined}
+                          inputMode="decimal"
+                          value={item.amountRupees}
+                          onChange={(e) =>
+                            setLineItems((prev) =>
+                              prev.map((it, i) =>
+                                i === idx
+                                  ? { ...it, amountRupees: e.target.value }
+                                  : it
+                              )
                             )
-                          )
-                        }
-                        placeholder="e.g. 2500"
-                        required
-                      />
-                    </label>
-                  </div>
-                  {lineItems.length > 1 && (
+                          }
+                          placeholder="e.g. 2500.00"
+                          required
+                        />
+                      </label>
+                    </div>
                     <div
                       style={{
                         display: "flex",
-                        justifyContent: "flex-end",
-                        marginTop: 8,
+                        justifyContent: "space-between",
+                        alignItems: "center",
+                        marginTop: 10,
+                        fontSize: 12.5,
+                        color: "var(--muted)",
                       }}
                     >
-                      <button
-                        type="button"
-                        className="btn sm danger"
-                        onClick={() =>
-                          setLineItems((prev) =>
-                            prev.filter((_, i) => i !== idx)
-                          )
-                        }
-                      >
-                        Remove item
-                      </button>
+                      <span className="tabular">
+                        Line Total: <b>{money(linePaise)}</b>
+                      </span>
+                      {lineItems.length > 1 && (
+                        <button
+                          type="button"
+                          className="btn sm danger"
+                          onClick={() =>
+                            setLineItems((prev) =>
+                              prev.filter((_, i) => i !== idx)
+                            )
+                          }
+                        >
+                          Remove item
+                        </button>
+                      )}
                     </div>
-                  )}
-                </div>
-              ))}
+                  </div>
+                );
+              })}
             </div>
 
             <div className="form-grid">
-              <label className="field">
-                Discount (₹)
+              <div className="field">
+                <div
+                  style={{
+                    display: "flex",
+                    justifyContent: "space-between",
+                    alignItems: "center",
+                  }}
+                >
+                  <span>Discount ({discountMode === "FIXED" ? "₹" : "%"})</span>
+                  <div className="segmented" style={{ padding: 2 }}>
+                    <button
+                      type="button"
+                      className={discountMode === "FIXED" ? "active" : ""}
+                      onClick={() => setDiscountMode("FIXED")}
+                      style={{ padding: "2px 8px", fontSize: 11 }}
+                    >
+                      ₹
+                    </button>
+                    <button
+                      type="button"
+                      className={discountMode === "PERCENT" ? "active" : ""}
+                      onClick={() => setDiscountMode("PERCENT")}
+                      style={{ padding: "2px 8px", fontSize: 11 }}
+                    >
+                      %
+                    </button>
+                  </div>
+                </div>
                 <input
                   name="discount"
                   inputMode="decimal"
-                  value={discountRupees}
-                  onChange={(e) => setDiscountRupees(e.target.value)}
+                  aria-label="Discount"
+                  value={discountInput}
+                  onChange={(e) => setDiscountInput(e.target.value)}
                 />
-              </label>
-              <label className="field">
-                Tax / GST (₹)
+              </div>
+
+              <div className="field">
+                <div
+                  style={{
+                    display: "flex",
+                    justifyContent: "space-between",
+                    alignItems: "center",
+                  }}
+                >
+                  <span>Tax / GST ({taxMode === "FIXED" ? "₹" : "%"})</span>
+                  <div className="segmented" style={{ padding: 2 }}>
+                    <button
+                      type="button"
+                      className={taxMode === "FIXED" ? "active" : ""}
+                      onClick={() => setTaxMode("FIXED")}
+                      style={{ padding: "2px 8px", fontSize: 11 }}
+                    >
+                      ₹
+                    </button>
+                    <button
+                      type="button"
+                      className={taxMode === "PERCENT" ? "active" : ""}
+                      onClick={() => setTaxMode("PERCENT")}
+                      style={{ padding: "2px 8px", fontSize: 11 }}
+                    >
+                      %
+                    </button>
+                  </div>
+                </div>
                 <input
                   name="tax"
                   inputMode="decimal"
-                  value={taxRupees}
-                  onChange={(e) => setTaxRupees(e.target.value)}
+                  aria-label="Tax"
+                  value={taxInput}
+                  onChange={(e) => setTaxInput(e.target.value)}
                 />
-              </label>
+              </div>
             </div>
 
-            <div
-              style={{
-                marginTop: 18,
-                padding: "14px 16px",
-                borderRadius: 14,
-                background: "var(--soft)",
-                display: "flex",
-                justifyContent: "space-between",
-                alignItems: "center",
-              }}
-            >
-              <span style={{ fontSize: 13.5, fontWeight: 600 }}>
-                Invoice Total Payable
-              </span>
-              <b style={{ fontSize: 20 }}>{money(liveTotals.netPaise)}</b>
+            <div className="invoice-summary-box">
+              <div className="invoice-summary-row">
+                <span>Subtotal</span>
+                <span>{money(liveCalculation.subtotalPaise)}</span>
+              </div>
+              <div className="invoice-summary-row">
+                <span>
+                  Discount{" "}
+                  {discountMode === "PERCENT" ? `(${discountInput || 0}%)` : ""}
+                </span>
+                <span>− {money(liveCalculation.discountPaise)}</span>
+              </div>
+              <div className="invoice-summary-row">
+                <span>
+                  Tax / GST{" "}
+                  {taxMode === "PERCENT" ? `(${taxInput || 0}%)` : ""}
+                </span>
+                <span>+ {money(liveCalculation.taxPaise)}</span>
+              </div>
+              <div className="invoice-summary-row total">
+                <span>Total Invoice Amount</span>
+                <span>{money(liveCalculation.totalPaise)}</span>
+              </div>
             </div>
+
+            {liveCalculation.error && (
+              <p className="auth-error" role="alert">
+                {liveCalculation.error}
+              </p>
+            )}
 
             <div
               style={{
@@ -2581,7 +2768,10 @@ export default function ClinicApp() {
               ) : (
                 <span />
               )}
-              <button className="btn primary" disabled={saving}>
+              <button
+                className="btn primary"
+                disabled={saving || Boolean(liveCalculation.error)}
+              >
                 {saving ? "Creating…" : "Save record"}
               </button>
             </div>
@@ -2589,105 +2779,196 @@ export default function ClinicApp() {
 
           <section className="card">
             <div className="card-header">
-              <h2>Invoices & payments</h2>
+              <h2>Invoices & payment ledger</h2>
               <div className="segmented">
-                {["ALL", "PENDING", "PARTIAL", "PAID"].map((st) => (
-                  <button
-                    key={st}
-                    type="button"
-                    className={statusFilter === st ? "active" : ""}
-                    onClick={() => setStatusFilter(st)}
-                  >
-                    {st === "ALL"
-                      ? "All"
-                      : st.charAt(0) + st.slice(1).toLowerCase()}
-                  </button>
-                ))}
+                {["ALL", "PENDING", "PARTIAL", "PAID", "CANCELLED"].map(
+                  (st) => (
+                    <button
+                      key={st}
+                      type="button"
+                      className={statusFilter === st ? "active" : ""}
+                      onClick={() => setStatusFilter(st)}
+                    >
+                      {st === "ALL"
+                        ? "All"
+                        : st.charAt(0) + st.slice(1).toLowerCase()}
+                    </button>
+                  )
+                )}
               </div>
             </div>
 
-            <div className="schedule">
-              {loading ? (
-                <div className="empty">Loading invoices…</div>
-              ) : filteredInvoices.length ? (
-                filteredInvoices.map((inv) => {
-                  const balancePaise = Math.max(
-                    0,
-                    inv.totalPaise - inv.paidPaise
-                  );
-                  return (
-                    <div className="appointment" key={inv.id}>
-                      <span className="time">
-                        <b>{money(inv.totalPaise)}</b>
-                        <br />
-                        {balancePaise > 0 ? (
-                          <span style={{ color: "var(--amber)" }}>
-                            Due: {money(balancePaise)}
-                          </span>
-                        ) : (
-                          <span style={{ color: "var(--green)" }}>Settled</span>
-                        )}
-                      </span>
-                      <div>
-                        <b
-                          style={{ cursor: "pointer" }}
-                          onClick={() =>
-                            inv.patient?.id && openPatientDetail(inv.patient.id)
-                          }
+            {loading ? (
+              <div style={{ display: "grid", gap: 12, padding: "12px 0" }}>
+                <div className="skeleton" style={{ height: 54 }} />
+                <div className="skeleton" style={{ height: 54 }} />
+              </div>
+            ) : filteredInvoices.length ? (
+              <div className="table-wrap">
+                <table className="table">
+                  <thead>
+                    <tr>
+                      <th>Invoice</th>
+                      <th>Patient & Items</th>
+                      <th style={{ textAlign: "right" }}>Total</th>
+                      <th style={{ textAlign: "right" }}>Paid</th>
+                      <th style={{ textAlign: "right" }}>Balance Due</th>
+                      <th>Status</th>
+                      <th style={{ textAlign: "right" }}>Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {filteredInvoices.map((inv) => {
+                      const summary = auditInvoiceRecord(inv);
+                      return (
+                        <tr
+                          key={inv.id}
+                          className="clickable"
+                          onClick={() => setInspectInvoice(inv)}
                         >
-                          {inv.patient?.firstName} {inv.patient?.lastName}
-                        </b>{" "}
-                        <span className="sub">· {inv.invoiceNumber}</span>
-                        <div className="sub">
-                          {(inv.items || [])
-                            .map((i: any) => `${i.description} (×${i.quantity})`)
-                            .join(", ")}
-                        </div>
-                        {inv.payments?.length > 0 && (
-                          <div
+                          <td>
+                            <b
+                              style={{
+                                fontFamily:
+                                  "ui-monospace, SFMono-Regular, Menlo, monospace",
+                                fontSize: 13,
+                              }}
+                            >
+                              {inv.invoiceNumber}
+                            </b>
+                            <div className="sub tabular" style={{ fontSize: 12 }}>
+                              {new Date(inv.date).toLocaleDateString("en-IN", {
+                                day: "numeric",
+                                month: "short",
+                                year: "numeric",
+                              })}
+                            </div>
+                          </td>
+                          <td>
+                            <b>
+                              {inv.patient?.firstName} {inv.patient?.lastName}
+                            </b>
+                            <div className="sub" style={{ fontSize: 12.5 }}>
+                              {(inv.items || [])
+                                .map(
+                                  (i: any) =>
+                                    `${i.description} (×${i.quantity})`
+                                )
+                                .join(", ")}
+                            </div>
+                            {inv.payments?.length > 0 && (
+                              <div
+                                style={{
+                                  marginTop: 4,
+                                  fontSize: 12,
+                                  color: "var(--muted)",
+                                }}
+                              >
+                                {inv.payments.length}{" "}
+                                {inv.payments.length === 1
+                                  ? "payment"
+                                  : "payments"}{" "}
+                                ({inv.payments.map((p: any) => p.method).join(", ")})
+                              </div>
+                            )}
+                          </td>
+                          <td
+                            className="tabular"
+                            style={{ textAlign: "right", fontWeight: 600 }}
+                          >
+                            {money(summary.totalPaise)}
+                          </td>
+                          <td
+                            className="tabular"
                             style={{
-                              marginTop: 4,
-                              fontSize: 11.5,
-                              color: "var(--muted)",
+                              textAlign: "right",
+                              color:
+                                summary.paidPaise > 0
+                                  ? "var(--green)"
+                                  : "var(--muted)",
+                              fontWeight: 600,
                             }}
                           >
-                            Paid {money(inv.paidPaise)} via{" "}
-                            {inv.payments.map((p: any) => p.method).join(", ")}
-                          </div>
-                        )}
-                      </div>
-                      <div
-                        style={{
-                          display: "flex",
-                          alignItems: "center",
-                          gap: 8,
-                        }}
-                      >
-                        <span
-                          className={`status ${String(inv.status).toLowerCase()}`}
-                        >
-                          {inv.status}
-                        </span>
-                        {balancePaise > 0 && (
-                          <button
-                            type="button"
-                            className="btn sm primary"
-                            onClick={() => openPaymentModal(inv)}
+                            {money(summary.paidPaise)}
+                          </td>
+                          <td
+                            className="tabular"
+                            style={{
+                              textAlign: "right",
+                              fontWeight: 700,
+                              color:
+                                summary.outstandingPaise > 0
+                                  ? "var(--amber)"
+                                  : "var(--muted)",
+                            }}
                           >
-                            Record payment
-                          </button>
-                        )}
-                      </div>
-                    </div>
-                  );
-                })
-              ) : (
-                <div className="empty">No invoices matching this filter.</div>
-              )}
-            </div>
+                            {money(summary.outstandingPaise)}
+                          </td>
+                          <td>
+                            <span
+                              className={`status ${String(
+                                summary.status
+                              ).toLowerCase()}`}
+                            >
+                              {summary.status}
+                            </span>
+                          </td>
+                          <td
+                            style={{ textAlign: "right" }}
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            <div
+                              style={{
+                                display: "inline-flex",
+                                gap: 6,
+                                alignItems: "center",
+                              }}
+                            >
+                              {summary.outstandingPaise > 0 &&
+                                summary.status !== "CANCELLED" && (
+                                  <button
+                                    type="button"
+                                    className="btn sm primary"
+                                    onClick={() => openPaymentModal(inv)}
+                                  >
+                                    Record payment
+                                  </button>
+                                )}
+                              <button
+                                type="button"
+                                className="btn sm subtle"
+                                onClick={() => setInspectInvoice(inv)}
+                              >
+                                Ledger
+                              </button>
+                              {summary.paidPaise === 0 &&
+                                summary.status !== "CANCELLED" && (
+                                  <button
+                                    type="button"
+                                    className="iconbtn"
+                                    title="Cancel unpaid invoice"
+                                    aria-label={`Cancel ${inv.invoiceNumber}`}
+                                    onClick={() => handleCancelInvoice(inv)}
+                                    style={{ minHeight: 31, padding: "4px 8px" }}
+                                  >
+                                    <Ban size={14} />
+                                  </button>
+                                )}
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <div className="empty">No invoices matching this filter.</div>
+            )}
           </section>
         </div>
 
+        {/* Record Payment Modal */}
         {paymentInvoice && (
           <div
             className="modal-backdrop"
@@ -2697,126 +2978,423 @@ export default function ClinicApp() {
               className="modal-panel narrow"
               onClick={(e) => e.stopPropagation()}
             >
-              <div className="card-header">
-                <div>
-                  <p className="eyebrow">RECORD PAYMENT</p>
-                  <h2 style={{ fontSize: 22, marginTop: 4 }}>
-                    {paymentInvoice.invoiceNumber}
-                  </h2>
-                </div>
-                <button
-                  type="button"
-                  className="iconbtn"
-                  onClick={() => setPaymentInvoice(null)}
-                >
-                  <X size={16} />
-                </button>
-              </div>
+              {(() => {
+                const summary = auditInvoiceRecord(paymentInvoice);
+                return (
+                  <>
+                    <div className="card-header">
+                      <div>
+                        <p className="eyebrow">RECORD PAYMENT</p>
+                        <h2 style={{ fontSize: 22, marginTop: 4 }}>
+                          {paymentInvoice.invoiceNumber}
+                        </h2>
+                      </div>
+                      <button
+                        type="button"
+                        className="iconbtn"
+                        onClick={() => setPaymentInvoice(null)}
+                      >
+                        <X size={16} />
+                      </button>
+                    </div>
 
-              <div
-                style={{
-                  padding: "12px 14px",
-                  borderRadius: 12,
-                  background: "var(--surface-subtle)",
-                  border: "1px solid var(--line)",
-                  marginBottom: 18,
-                  fontSize: 13.5,
-                }}
-              >
-                <div>
-                  Patient:{" "}
-                  <b>
-                    {paymentInvoice.patient?.firstName}{" "}
-                    {paymentInvoice.patient?.lastName}
-                  </b>
-                </div>
-                <div
-                  style={{
-                    display: "flex",
-                    justifyContent: "space-between",
-                    marginTop: 6,
-                  }}
-                >
-                  <span>Total: {money(paymentInvoice.totalPaise)}</span>
-                  <span>Paid: {money(paymentInvoice.paidPaise)}</span>
-                  <b>
-                    Outstanding:{" "}
-                    {money(
-                      Math.max(
-                        0,
-                        paymentInvoice.totalPaise - paymentInvoice.paidPaise
-                      )
+                    <div
+                      className="invoice-summary-box"
+                      style={{ marginTop: 0, marginBottom: 18 }}
+                    >
+                      <div className="invoice-summary-row">
+                        <span>Patient</span>
+                        <b>
+                          {paymentInvoice.patient?.firstName}{" "}
+                          {paymentInvoice.patient?.lastName}
+                        </b>
+                      </div>
+                      <div className="invoice-summary-row">
+                        <span>Invoice Total</span>
+                        <span>{money(summary.totalPaise)}</span>
+                      </div>
+                      <div className="invoice-summary-row">
+                        <span>Already Paid</span>
+                        <span style={{ color: "var(--green)" }}>
+                          {money(summary.paidPaise)}
+                        </span>
+                      </div>
+                      <div className="invoice-summary-row total">
+                        <span>Remaining Balance</span>
+                        <span style={{ color: "var(--amber)" }}>
+                          {money(summary.outstandingPaise)}
+                        </span>
+                      </div>
+                    </div>
+
+                    <form
+                      onSubmit={handleRecordPayment}
+                      style={{ display: "grid", gap: 14 }}
+                    >
+                      <div className="field">
+                        <div
+                          style={{
+                            display: "flex",
+                            justifyContent: "space-between",
+                            alignItems: "center",
+                          }}
+                        >
+                          <span>Amount received (₹) *</span>
+                          <div style={{ display: "flex", gap: 6 }}>
+                            <button
+                              type="button"
+                              className="btn sm subtle"
+                              onClick={() =>
+                                setPaymentAmountRupees(
+                                  (summary.outstandingPaise / 100).toFixed(2)
+                                )
+                              }
+                            >
+                              Full balance
+                            </button>
+                            {summary.outstandingPaise >= 200 && (
+                              <button
+                                type="button"
+                                className="btn sm"
+                                onClick={() =>
+                                  setPaymentAmountRupees(
+                                    (
+                                      Math.round(summary.outstandingPaise / 2) /
+                                      100
+                                    ).toFixed(2)
+                                  )
+                                }
+                              >
+                                50%
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                        <input
+                          inputMode="decimal"
+                          value={paymentAmountRupees}
+                          onChange={(e) =>
+                            setPaymentAmountRupees(e.target.value)
+                          }
+                          required
+                        />
+                      </div>
+
+                      <label className="field">
+                        Payment method *
+                        <select
+                          value={paymentMethod}
+                          onChange={(e) =>
+                            setPaymentMethod(e.target.value as any)
+                          }
+                        >
+                          <option value="UPI">UPI</option>
+                          <option value="CASH">Cash</option>
+                          <option value="CARD">Card</option>
+                          <option value="BANK_TRANSFER">Bank Transfer</option>
+                          <option value="OTHER">Other</option>
+                        </select>
+                      </label>
+
+                      <label className="field">
+                        Transaction / UPI Reference
+                        <input
+                          value={paymentReference}
+                          onChange={(e) => setPaymentReference(e.target.value)}
+                          placeholder="Optional UTR, receipt, or approval code"
+                        />
+                      </label>
+
+                      <label className="field">
+                        Notes
+                        <input
+                          value={paymentNotes}
+                          onChange={(e) => setPaymentNotes(e.target.value)}
+                          placeholder="Optional payment note"
+                        />
+                      </label>
+
+                      {paymentError && (
+                        <p className="auth-error" role="alert">
+                          {paymentError}
+                        </p>
+                      )}
+
+                      <div
+                        style={{
+                          display: "flex",
+                          justifyContent: "flex-end",
+                          gap: 10,
+                          marginTop: 8,
+                        }}
+                      >
+                        <button
+                          type="button"
+                          className="btn"
+                          onClick={() => setPaymentInvoice(null)}
+                        >
+                          Cancel
+                        </button>
+                        <button
+                          className="btn primary"
+                          disabled={recordingPayment}
+                        >
+                          {recordingPayment
+                            ? "Recording…"
+                            : "Confirm payment"}
+                        </button>
+                      </div>
+                    </form>
+                  </>
+                );
+              })()}
+            </div>
+          </div>
+        )}
+
+        {/* Invoice Detail & Payment History Modal */}
+        {inspectInvoice && (
+          <div
+            className="modal-backdrop"
+            onClick={() => setInspectInvoice(null)}
+          >
+            <div
+              className="modal-panel"
+              onClick={(e) => e.stopPropagation()}
+            >
+              {(() => {
+                const summary = auditInvoiceRecord(inspectInvoice);
+                return (
+                  <>
+                    <div className="card-header">
+                      <div>
+                        <p className="eyebrow">
+                          INVOICE LEDGER · {inspectInvoice.invoiceNumber}
+                        </p>
+                        <h2 style={{ fontSize: 24, marginTop: 4 }}>
+                          {inspectInvoice.patient?.firstName}{" "}
+                          {inspectInvoice.patient?.lastName}
+                        </h2>
+                        <div className="sub">
+                          Issued{" "}
+                          {new Date(inspectInvoice.date).toLocaleString(
+                            "en-IN"
+                          )}{" "}
+                          · Patient ID: {inspectInvoice.patient?.patientId}
+                        </div>
+                      </div>
+                      <div style={{ display: "flex", gap: 8 }}>
+                        <span
+                          className={`status ${String(
+                            summary.status
+                          ).toLowerCase()}`}
+                        >
+                          {summary.status}
+                        </span>
+                        <button
+                          type="button"
+                          className="iconbtn"
+                          onClick={() => setInspectInvoice(null)}
+                        >
+                          <X size={16} />
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className="table-wrap" style={{ marginBottom: 18 }}>
+                      <table className="table">
+                        <thead>
+                          <tr>
+                            <th>Treatment / Charge Description</th>
+                            <th style={{ textAlign: "right" }}>Qty</th>
+                            <th style={{ textAlign: "right" }}>Unit Price</th>
+                            <th style={{ textAlign: "right" }}>Line Total</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {(inspectInvoice.items || []).map((item: any) => (
+                            <tr key={item.id}>
+                              <td>
+                                <b>{item.description}</b>
+                              </td>
+                              <td
+                                className="tabular"
+                                style={{ textAlign: "right" }}
+                              >
+                                {item.quantity}
+                              </td>
+                              <td
+                                className="tabular"
+                                style={{ textAlign: "right" }}
+                              >
+                                {money(item.unitPaise)}
+                              </td>
+                              <td
+                                className="tabular"
+                                style={{
+                                  textAlign: "right",
+                                  fontWeight: 600,
+                                }}
+                              >
+                                {money(item.quantity * item.unitPaise)}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+
+                    <div
+                      className="invoice-summary-box"
+                      style={{ marginBottom: 22 }}
+                    >
+                      <div className="invoice-summary-row">
+                        <span>Subtotal</span>
+                        <span>{money(summary.subtotalPaise)}</span>
+                      </div>
+                      <div className="invoice-summary-row">
+                        <span>Discount</span>
+                        <span>− {money(summary.discountPaise)}</span>
+                      </div>
+                      <div className="invoice-summary-row">
+                        <span>Tax / GST</span>
+                        <span>+ {money(summary.taxPaise)}</span>
+                      </div>
+                      <div className="invoice-summary-row total">
+                        <span>Total Invoice Amount</span>
+                        <span>{money(summary.totalPaise)}</span>
+                      </div>
+                      <div className="invoice-summary-row">
+                        <span>Amount Paid</span>
+                        <b style={{ color: "var(--green)" }}>
+                          {money(summary.paidPaise)}
+                        </b>
+                      </div>
+                      <div className="invoice-summary-row">
+                        <span>Remaining Balance</span>
+                        <b
+                          style={{
+                            color:
+                              summary.outstandingPaise > 0
+                                ? "var(--amber)"
+                                : "var(--ink)",
+                          }}
+                        >
+                          {money(summary.outstandingPaise)}
+                        </b>
+                      </div>
+                    </div>
+
+                    <h3 style={{ fontSize: 15, marginBottom: 10 }}>
+                      Payment History ({inspectInvoice.payments?.length || 0})
+                    </h3>
+                    {inspectInvoice.payments?.length ? (
+                      <div className="table-wrap" style={{ marginBottom: 18 }}>
+                        <table className="table">
+                          <thead>
+                            <tr>
+                              <th>Payment ID</th>
+                              <th>Date & Time</th>
+                              <th>Method</th>
+                              <th>Reference</th>
+                              <th style={{ textAlign: "right" }}>Amount</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {inspectInvoice.payments.map((pay: any) => (
+                              <tr key={pay.id}>
+                                <td
+                                  style={{
+                                    fontFamily:
+                                      "ui-monospace, SFMono-Regular, Menlo, monospace",
+                                    fontSize: 12,
+                                  }}
+                                >
+                                  {pay.id}
+                                </td>
+                                <td className="tabular">
+                                  {new Date(pay.paidAt).toLocaleString("en-IN")}
+                                </td>
+                                <td>
+                                  <span className="status scheduled">
+                                    {pay.method}
+                                  </span>
+                                </td>
+                                <td>{pay.reference || "—"}</td>
+                                <td
+                                  className="tabular"
+                                  style={{
+                                    textAlign: "right",
+                                    fontWeight: 700,
+                                    color: "var(--green)",
+                                  }}
+                                >
+                                  {money(pay.amountPaise)}
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    ) : (
+                      <p className="sub" style={{ marginBottom: 18 }}>
+                        No payments recorded against this invoice yet.
+                      </p>
                     )}
-                  </b>
-                </div>
-              </div>
 
-              <form onSubmit={handleRecordPayment} style={{ display: "grid", gap: 14 }}>
-                <label className="field">
-                  Amount received (₹) *
-                  <input
-                    inputMode="decimal"
-                    value={paymentAmountRupees}
-                    onChange={(e) => setPaymentAmountRupees(e.target.value)}
-                    required
-                  />
-                </label>
-                <label className="field">
-                  Payment method *
-                  <select
-                    value={paymentMethod}
-                    onChange={(e) => setPaymentMethod(e.target.value as any)}
-                  >
-                    <option value="UPI">UPI</option>
-                    <option value="CASH">Cash</option>
-                    <option value="CARD">Card</option>
-                    <option value="BANK_TRANSFER">Bank Transfer</option>
-                    <option value="OTHER">Other</option>
-                  </select>
-                </label>
-                <label className="field">
-                  Transaction / UPI Reference
-                  <input
-                    value={paymentReference}
-                    onChange={(e) => setPaymentReference(e.target.value)}
-                    placeholder="Optional UTR or receipt number"
-                  />
-                </label>
-                <label className="field">
-                  Notes
-                  <input
-                    value={paymentNotes}
-                    onChange={(e) => setPaymentNotes(e.target.value)}
-                    placeholder="Optional payment note"
-                  />
-                </label>
-
-                {paymentError && (
-                  <p className="auth-error" role="alert">
-                    {paymentError}
-                  </p>
-                )}
-
-                <div
-                  style={{
-                    display: "flex",
-                    justifyContent: "flex-end",
-                    gap: 10,
-                    marginTop: 8,
-                  }}
-                >
-                  <button
-                    type="button"
-                    className="btn"
-                    onClick={() => setPaymentInvoice(null)}
-                  >
-                    Cancel
-                  </button>
-                  <button className="btn primary" disabled={recordingPayment}>
-                    {recordingPayment ? "Recording…" : "Confirm payment"}
-                  </button>
-                </div>
-              </form>
+                    <div
+                      style={{
+                        display: "flex",
+                        justifyContent: "space-between",
+                        alignItems: "center",
+                        paddingTop: 14,
+                        borderTop: "1px solid var(--line)",
+                      }}
+                    >
+                      <span
+                        className="sub"
+                        style={{
+                          display: "inline-flex",
+                          alignItems: "center",
+                          gap: 6,
+                          fontSize: 12.5,
+                        }}
+                      >
+                        <ShieldCheck
+                          size={15}
+                          style={{ color: "var(--green)" }}
+                        />
+                        {summary.invariantsValid
+                          ? "All financial invariants verified (Subtotal − Discount + Tax = Paid + Outstanding)"
+                          : summary.violations.join("; ")}
+                      </span>
+                      <div style={{ display: "flex", gap: 10 }}>
+                        <button
+                          type="button"
+                          className="btn"
+                          onClick={() => window.print()}
+                        >
+                          <Printer size={15} /> Print Invoice
+                        </button>
+                        {summary.outstandingPaise > 0 &&
+                          summary.status !== "CANCELLED" && (
+                            <button
+                              type="button"
+                              className="btn primary"
+                              onClick={() => {
+                                const target = inspectInvoice;
+                                setInspectInvoice(null);
+                                openPaymentModal(target);
+                              }}
+                            >
+                              Record payment
+                            </button>
+                          )}
+                      </div>
+                    </div>
+                  </>
+                );
+              })()}
             </div>
           </div>
         )}
@@ -3022,7 +3600,10 @@ export default function ClinicApp() {
 
             <div className="schedule">
               {loading ? (
-                <div className="empty">Loading follow-ups…</div>
+                <div style={{ display: "grid", gap: 12, padding: "12px 0" }}>
+                  <div className="skeleton" style={{ height: 48 }} />
+                  <div className="skeleton" style={{ height: 48 }} />
+                </div>
               ) : filtered.length ? (
                 filtered.map((f) => {
                   const isOverdue =
@@ -3151,20 +3732,29 @@ export default function ClinicApp() {
               <div className="appointment">
                 <span className="time">Revenue</span>
                 <div>
-                  <b>Total Billed Across {billing?.invoicesCount ?? 0} Invoices</b>
+                  <b>
+                    Total Billed Across {billing?.invoicesCount ?? 0} Active
+                    Invoices
+                  </b>
                   <div className="sub">
-                    Discounts granted: {money(billing?.totalDiscountPaise ?? 0)}
+                    Discounts granted: {money(billing?.totalDiscountPaise ?? 0)}{" "}
+                    · Tax: {money(billing?.totalTaxPaise ?? 0)}
                   </div>
                 </div>
-                <b>{money(billing?.totalBilledPaise ?? 0)}</b>
+                <b className="tabular">{money(billing?.totalBilledPaise ?? 0)}</b>
               </div>
               <div className="appointment">
                 <span className="time">Collected</span>
                 <div>
                   <b>Realized Payments Received</b>
-                  <div className="sub">Collection efficiency rate</div>
+                  <div className="sub">
+                    Outstanding balance:{" "}
+                    {money(billing?.outstandingPaise ?? 0)}
+                  </div>
                 </div>
-                <span className="status completed">{collectionRate}% Collected</span>
+                <span className="status completed">
+                  {collectionRate}% Collected
+                </span>
               </div>
               <div className="appointment">
                 <span className="time">Clinical</span>
@@ -3184,7 +3774,7 @@ export default function ClinicApp() {
             <h2>Recent clinical audit log</h2>
             <div className="schedule">
               {dash?.recentAudit?.length ? (
-                dash.recentAudit.slice(0, 7).map((log: any) => (
+                dash.recentAudit.slice(0, 8).map((log: any) => (
                   <div className="appointment" key={log.id}>
                     <span className="time">
                       {new Date(log.createdAt).toLocaleTimeString([], {
@@ -3197,7 +3787,7 @@ export default function ClinicApp() {
                         {log.action} · {log.entity}
                       </b>
                       <div className="sub" style={{ fontSize: 12 }}>
-                        Record ID: {log.entityId.slice(0, 12)}…
+                        ID: {log.entityId}
                       </div>
                     </div>
                     <span className="status synced">Logged</span>
@@ -3331,7 +3921,9 @@ export default function ClinicApp() {
                 <div className="sub" style={{ fontSize: 12 }}>
                   Synced
                 </div>
-                <b style={{ fontSize: 20 }}>{syncDetail?.synced ?? "—"}</b>
+                <b className="tabular" style={{ fontSize: 20 }}>
+                  {syncDetail?.synced ?? "—"}
+                </b>
               </div>
               <div
                 style={{
@@ -3344,7 +3936,9 @@ export default function ClinicApp() {
                 <div className="sub" style={{ fontSize: 12 }}>
                   Pending
                 </div>
-                <b style={{ fontSize: 20 }}>{syncDetail?.pending ?? "—"}</b>
+                <b className="tabular" style={{ fontSize: 20 }}>
+                  {syncDetail?.pending ?? "—"}
+                </b>
               </div>
               <div
                 style={{
@@ -3357,7 +3951,9 @@ export default function ClinicApp() {
                 <div className="sub" style={{ fontSize: 12 }}>
                   Failed / Retry
                 </div>
-                <b style={{ fontSize: 20 }}>{syncDetail?.failed ?? "—"}</b>
+                <b className="tabular" style={{ fontSize: 20 }}>
+                  {syncDetail?.failed ?? "—"}
+                </b>
               </div>
             </div>
 
@@ -3370,11 +3966,13 @@ export default function ClinicApp() {
 
             <div className="schedule">
               {syncDetail?.jobs?.length ? (
-                syncDetail.jobs.slice(0, 5).map((job: any) => (
+                syncDetail.jobs.slice(0, 6).map((job: any) => (
                   <div className="appointment" key={job.id}>
                     <span className="time">{job.entity}</span>
                     <div>
-                      <b>{job.operation}</b>
+                      <b>
+                        {job.operation} · {job.entityId.slice(0, 10)}…
+                      </b>
                       <div className="sub" style={{ fontSize: 12 }}>
                         Attempts: {job.attempts}
                         {job.lastError ? ` · ${job.lastError}` : ""}
@@ -3589,7 +4187,8 @@ export default function ClinicApp() {
                   <div
                     style={{
                       display: "grid",
-                      gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))",
+                      gridTemplateColumns:
+                        "repeat(auto-fit, minmax(200px, 1fr))",
                       gap: 12,
                     }}
                   >
@@ -3662,7 +4261,9 @@ export default function ClinicApp() {
                             >
                               <span>
                                 <b>{a.type}</b> ·{" "}
-                                {new Date(a.startsAt).toLocaleDateString("en-IN")}
+                                {new Date(a.startsAt).toLocaleDateString(
+                                  "en-IN"
+                                )}
                               </span>
                               <span
                                 className={`status ${String(
@@ -3707,7 +4308,7 @@ export default function ClinicApp() {
                               <span>
                                 <b>{t.procedure}</b> ({t.category})
                               </span>
-                              <b>{money(t.costPaise)}</b>
+                              <b className="tabular">{money(t.costPaise)}</b>
                             </div>
                           ))
                         ) : (
@@ -3778,30 +4379,33 @@ export default function ClinicApp() {
                       </b>
                       <div className="schedule" style={{ marginTop: 8 }}>
                         {p.invoices?.length ? (
-                          p.invoices.slice(0, 5).map((inv: any) => (
-                            <div
-                              key={inv.id}
-                              style={{
-                                display: "flex",
-                                justifyContent: "space-between",
-                                padding: "8px 0",
-                                borderTop: "1px solid var(--line)",
-                                fontSize: 13,
-                              }}
-                            >
-                              <span>
-                                <b>{inv.invoiceNumber}</b> · Paid{" "}
-                                {money(inv.paidPaise)} / {money(inv.totalPaise)}
-                              </span>
-                              <span
-                                className={`status ${String(
-                                  inv.status
-                                ).toLowerCase()}`}
+                          p.invoices.slice(0, 5).map((inv: any) => {
+                            const s = auditInvoiceRecord(inv);
+                            return (
+                              <div
+                                key={inv.id}
+                                style={{
+                                  display: "flex",
+                                  justifyContent: "space-between",
+                                  padding: "8px 0",
+                                  borderTop: "1px solid var(--line)",
+                                  fontSize: 13,
+                                }}
                               >
-                                {inv.status}
-                              </span>
-                            </div>
-                          ))
+                                <span className="tabular">
+                                  <b>{inv.invoiceNumber}</b> · Paid{" "}
+                                  {money(s.paidPaise)} / {money(s.totalPaise)}
+                                </span>
+                                <span
+                                  className={`status ${String(
+                                    s.status
+                                  ).toLowerCase()}`}
+                                >
+                                  {s.status}
+                                </span>
+                              </div>
+                            );
+                          })
                         ) : (
                           <p className="sub" style={{ marginTop: 8 }}>
                             No invoices created.
@@ -3926,7 +4530,13 @@ export default function ClinicApp() {
                         <Trash2 size={14} /> Archive patient
                       </button>
                     ) : (
-                      <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                      <div
+                        style={{
+                          display: "flex",
+                          gap: 8,
+                          alignItems: "center",
+                        }}
+                      >
                         <span style={{ fontSize: 12.5, color: "var(--red)" }}>
                           Archive this patient record?
                         </span>

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { calculateInvoiceTotals } from "@/lib/finance";
 
 const text = (max = 2_000) => z.string().trim().max(max);
 const optionalText = (max?: number) => text(max).optional();
@@ -17,7 +18,13 @@ export const patientSchema = z.object({
     .string()
     .trim()
     .regex(/^[+0-9() -]{8,20}$/, "Invalid phone number"),
-  email: z.string().trim().email("Invalid email address").max(254).optional().or(z.literal("")),
+  email: z
+    .string()
+    .trim()
+    .email("Invalid email address")
+    .max(254)
+    .optional()
+    .or(z.literal("")),
   dateOfBirth: dateString,
   gender: optionalText(40),
   city: optionalText(100),
@@ -45,7 +52,9 @@ export const appointmentSchema = z
 
 export const appointmentUpdateSchema = z
   .object({
-    status: z.enum(["SCHEDULED", "CONFIRMED", "IN_PROGRESS", "COMPLETED", "CANCELLED"]).optional(),
+    status: z
+      .enum(["SCHEDULED", "CONFIRMED", "IN_PROGRESS", "COMPLETED", "CANCELLED"])
+      .optional(),
     startsAt: z.string().datetime().optional(),
     endsAt: z.string().datetime().optional(),
     type: text(100).min(1).optional(),
@@ -102,27 +111,49 @@ export const prescriptionSchema = z.object({
     .max(20),
 });
 
-export const invoiceSchema = z.object({
-  patientId: z.string().cuid("Please select a valid patient"),
-  discountPaise: z.number().int().min(0).default(0),
-  taxPaise: z.number().int().min(0).default(0),
-  items: z
-    .array(
-      z.object({
-        description: text(200).min(1, "Description is required"),
-        quantity: z.number().int().min(1).max(100),
-        unitPaise: z.number().int().min(0).max(10_000_000),
-      })
-    )
-    .min(1, "At least one line item is required")
-    .max(100),
+export const invoiceSchema = z
+  .object({
+    patientId: z.string().cuid("Please select a valid patient"),
+    discountPaise: z.number().int().min(0).default(0),
+    discountPercent: z.number().min(0).max(100).optional(),
+    taxPaise: z.number().int().min(0).default(0),
+    taxPercent: z.number().min(0).max(100).optional(),
+    items: z
+      .array(
+        z.object({
+          description: text(200).min(1, "Description is required"),
+          quantity: z.number().int().min(1).max(100),
+          unitPaise: z.number().int().min(0).max(10_000_000),
+        })
+      )
+      .min(1, "At least one line item is required")
+      .max(100),
+  })
+  .superRefine((data, ctx) => {
+    try {
+      calculateInvoiceTotals(data);
+    } catch (err) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: err instanceof Error ? err.message : "Invalid invoice totals",
+      });
+    }
+  });
+
+export const invoiceUpdateSchema = z.object({
+  status: z.enum(["CANCELLED"]),
 });
 
 export const paymentSchema = z.object({
-  amountPaise: z.number().int().positive("Amount must be greater than zero").max(10_000_000),
+  amountPaise: z
+    .number()
+    .int("Payment amount must be an integer in paise")
+    .positive("Amount must be greater than zero")
+    .max(10_000_000),
   method: z.enum(["CASH", "UPI", "CARD", "BANK_TRANSFER", "OTHER"]),
   reference: optionalText(120),
   notes: optionalText(),
+  idempotencyKey: optionalText(120),
 });
 
 export const followUpSchema = z.object({
@@ -130,24 +161,30 @@ export const followUpSchema = z.object({
   dueDate: z.string().datetime({ message: "Valid due date is required" }),
   reason: text(300).min(1, "Reason is required"),
   notes: optionalText(),
-  status: z.enum(["PENDING", "COMPLETED", "RESCHEDULED", "CANCELLED"]).default("PENDING"),
+  status: z
+    .enum(["PENDING", "COMPLETED", "RESCHEDULED", "CANCELLED"])
+    .default("PENDING"),
 });
 
 export const followUpUpdateSchema = z.object({
-  status: z.enum(["PENDING", "COMPLETED", "RESCHEDULED", "CANCELLED"]).optional(),
+  status: z
+    .enum(["PENDING", "COMPLETED", "RESCHEDULED", "CANCELLED"])
+    .optional(),
   dueDate: z.string().datetime().optional(),
   reason: text(300).min(1).optional(),
   notes: optionalText(),
 });
 
 /**
- * Safely converts a human-entered INR string (e.g., "1250", "1,250.50") to integer paise.
+ * Safely converts a human-entered INR string (e.g., "1250", "1,250.50", "1,25,000.00") to integer paise.
  * Returns null if the input is malformed or negative.
  */
 export function parseRupeesToPaise(input: string | number): number | null {
   if (typeof input === "number") {
     if (!Number.isFinite(input) || input < 0) return null;
-    return Math.round(input * 100);
+    const rounded = Math.round(input * 100);
+    if (Math.abs(input * 100 - rounded) > 1e-6) return null;
+    return Number.isSafeInteger(rounded) ? rounded : null;
   }
   const cleaned = input.replace(/,/g, "").trim();
   if (!cleaned) return 0;
