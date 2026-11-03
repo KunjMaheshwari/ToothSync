@@ -153,6 +153,7 @@ export default function Login() {
             justifyContent: "space-between",
             flexWrap: "wrap",
             gap: 8,
+            marginTop: 24,
           }}
         >
           <span>Doctor Kinjal Maheshwari&apos;s Patient Tracker</span>
@@ -207,8 +208,10 @@ export default function Login() {
                   style={{
                     position: "absolute",
                     right: 4,
-                    top: 4,
-                    minHeight: 30,
+                    top: "50%",
+                    transform: "translateY(-50%)",
+                    minHeight: 34,
+                    minWidth: 34,
                     border: 0,
                     padding: "4px 8px",
                     background: "transparent",

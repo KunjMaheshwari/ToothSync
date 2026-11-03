@@ -965,8 +965,8 @@ export default function ClinicApp() {
             <div
               style={{
                 position: "relative",
-                flex: 1,
-                minWidth: 240,
+                flex: "1 1 220px",
+                minWidth: 0,
                 display: "flex",
                 alignItems: "center",
               }}
@@ -1942,15 +1942,7 @@ export default function ClinicApp() {
                 />
               </label>
             </div>
-            <div
-              style={{
-                display: "flex",
-                justifyContent: "space-between",
-                alignItems: "center",
-                gap: 12,
-                marginTop: 22,
-              }}
-            >
+            <div className="form-actions-row">
               {notice ? (
                 <span
                   className={isError ? "auth-error" : "sub"}
@@ -2399,14 +2391,7 @@ export default function ClinicApp() {
               ))}
             </div>
 
-            <div
-              style={{
-                display: "flex",
-                justifyContent: "space-between",
-                alignItems: "center",
-                marginTop: 22,
-              }}
-            >
+            <div className="form-actions-row">
               {notice ? (
                 <span
                   className={isError ? "auth-error" : "sub"}
@@ -3080,14 +3065,7 @@ export default function ClinicApp() {
               </p>
             )}
 
-            <div
-              style={{
-                display: "flex",
-                justifyContent: "space-between",
-                alignItems: "center",
-                marginTop: 20,
-              }}
-            >
+            <div className="form-actions-row" style={{ marginTop: 20 }}>
               {notice ? (
                 <span
                   className={isError ? "auth-error" : "sub"}
@@ -3679,6 +3657,8 @@ export default function ClinicApp() {
                         display: "flex",
                         justifyContent: "space-between",
                         alignItems: "center",
+                        flexWrap: "wrap",
+                        gap: 12,
                         paddingTop: 14,
                         borderTop: "1px solid var(--line)",
                       }}
@@ -3694,13 +3674,13 @@ export default function ClinicApp() {
                       >
                         <ShieldCheck
                           size={15}
-                          style={{ color: "var(--green)" }}
+                          style={{ color: "var(--green)", flexShrink: 0 }}
                         />
                         {summary.invariantsValid
                           ? "All financial invariants verified (Subtotal − Discount + Tax = Paid + Outstanding)"
                           : summary.violations.join("; ")}
                       </span>
-                      <div style={{ display: "flex", gap: 10 }}>
+                      <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
                         <button
                           type="button"
                           className="btn"
@@ -3886,14 +3866,7 @@ export default function ClinicApp() {
                 />
               </label>
             </div>
-            <div
-              style={{
-                display: "flex",
-                justifyContent: "space-between",
-                alignItems: "center",
-                marginTop: 22,
-              }}
-            >
+            <div className="form-actions-row">
               {notice ? (
                 <span
                   className={isError ? "auth-error" : "sub"}
@@ -4234,14 +4207,7 @@ export default function ClinicApp() {
                   : "Local Queue Mode"}
               </span>
             </div>
-            <div
-              style={{
-                display: "grid",
-                gridTemplateColumns: "repeat(3, 1fr)",
-                gap: 10,
-                marginBottom: 18,
-              }}
-            >
+            <div className="sync-stats-grid">
               <div
                 style={{
                   padding: 12,
@@ -4411,7 +4377,15 @@ export default function ClinicApp() {
           ) : (
             <>
               <div className="card-header" style={{ marginBottom: 18 }}>
-                <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+                <div
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 14,
+                    minWidth: 0,
+                    flex: "1 1 240px",
+                  }}
+                >
                   <span
                     className="avatar"
                     style={{ width: 50, height: 50, fontSize: 17, margin: 0 }}
@@ -4419,7 +4393,7 @@ export default function ClinicApp() {
                     {p.firstName?.[0]}
                     {p.lastName?.[0]}
                   </span>
-                  <div>
+                  <div style={{ minWidth: 0, overflowWrap: "anywhere" }}>
                     <p className="eyebrow">
                       {p.patientId}
                       {p.referenceId ? ` · REF ${p.referenceId}` : ""}
@@ -5069,6 +5043,8 @@ export default function ClinicApp() {
                       display: "flex",
                       justifyContent: "space-between",
                       alignItems: "center",
+                      flexWrap: "wrap",
+                      gap: 12,
                       marginTop: 22,
                       paddingTop: 16,
                       borderTop: "1px solid var(--line)",
@@ -5088,6 +5064,7 @@ export default function ClinicApp() {
                           display: "flex",
                           gap: 8,
                           alignItems: "center",
+                          flexWrap: "wrap",
                         }}
                       >
                         <span style={{ fontSize: 12.5, color: "var(--red)" }}>
@@ -5244,7 +5221,7 @@ export default function ClinicApp() {
   return (
     <div className="app-shell">
       <aside className="sidebar">
-        <div>
+        <div className="sidebar-main">
           <div className="brand">
             <span className="brand-mark">
               <Stethoscope size={17} />
@@ -5257,7 +5234,7 @@ export default function ClinicApp() {
 
           <nav className="nav" aria-label="Primary navigation">
             {navGroups.map((group) => (
-              <div key={group.label} style={{ display: "grid", gap: 2 }}>
+              <div key={group.label} className="nav-group">
                 <div className="nav-section-label">{group.label}</div>
                 {group.items.map(([n, I]: any) => (
                   <button
