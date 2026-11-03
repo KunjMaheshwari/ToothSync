@@ -45,6 +45,7 @@ export async function PATCH(
     const conflict = await db.appointment.findFirst({
       where: {
         id: { not: id },
+        patient: { deletedAt: null },
         status: { notIn: ["CANCELLED", "COMPLETED"] },
         startsAt: { lt: nextEndsAt },
         endsAt: { gt: nextStartsAt },

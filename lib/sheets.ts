@@ -15,6 +15,7 @@ export interface ReconciliationResult {
   matchedCount: number;
   missingIds: string[];
   duplicateIds: string[];
+  unexpectedIds: string[];
   mismatches: Array<{
     id: string;
     field: string;
@@ -396,6 +397,7 @@ export function reconcileEntitySheet(
 
   const missingIds: string[] = [];
   const duplicateIds: string[] = [];
+  const unexpectedIds: string[] = [];
   const mismatches: Array<{
     id: string;
     field: string;
@@ -409,8 +411,11 @@ export function reconcileEntitySheet(
   let dbPaidPaise = 0;
   let sheetPaidPaise = 0;
 
+  const knownDbIds = new Set<string>();
+
   for (const dbRecord of dbRecords) {
     const expected = buildSheetRecord(entity, dbRecord);
+    knownDbIds.add(expected.id);
     const matchingRows = rows.filter((r) => String(r[0]) === expected.id);
 
     if (matchingRows.length === 0) {
@@ -460,6 +465,13 @@ export function reconcileEntitySheet(
     }
   }
 
+  for (const row of rows) {
+    const rowId = String(row[0] ?? "").trim();
+    if (rowId && !knownDbIds.has(rowId) && !unexpectedIds.includes(rowId)) {
+      unexpectedIds.push(rowId);
+    }
+  }
+
   const financialSummary =
     entity === "Invoice" || entity === "Payment"
       ? {
@@ -481,11 +493,13 @@ export function reconcileEntitySheet(
     matchedCount,
     missingIds,
     duplicateIds,
+    unexpectedIds,
     mismatches,
     financialSummary,
     pass:
       missingIds.length === 0 &&
       duplicateIds.length === 0 &&
+      unexpectedIds.length === 0 &&
       mismatches.length === 0 &&
       (financialSummary ? financialSummary.balancesMatch : true),
   };

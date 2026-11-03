@@ -3,7 +3,11 @@ import { db } from "@/lib/db";
 import { logAudit, protectedRead, protectedWrite, queueRecord } from "@/lib/api";
 import { readJson } from "@/lib/security";
 import { invoiceUpdateSchema } from "@/lib/validation";
-import { auditInvoiceRecord } from "@/lib/finance";
+import {
+  auditInvoiceRecord,
+  calculateInvoiceTotals,
+  deriveInvoiceStatus,
+} from "@/lib/finance";
 
 export async function GET(
   _: Request,
@@ -49,28 +53,108 @@ export async function PATCH(
     );
   }
 
+  const d = parsed.data;
+
   try {
     const updated = await db.$transaction(async (tx) => {
       const existing = await tx.invoice.findUnique({
         where: { id },
-        include: { payments: true },
+        include: { items: true, payments: true },
       });
       if (!existing) throw new Error("NOT_FOUND");
 
       const sumPaid = existing.payments.reduce((s, p) => s + p.amountPaise, 0);
-      if (existing.paidPaise > 0 || sumPaid > 0) {
-        throw new Error("HAS_PAYMENTS");
+      const authoritativePaid = Math.max(existing.paidPaise, sumPaid);
+
+      if (d.status === "CANCELLED") {
+        if (authoritativePaid > 0) {
+          throw new Error("HAS_PAYMENTS");
+        }
+        const invoice = await tx.invoice.update({
+          where: { id },
+          data: { status: "CANCELLED" },
+          include: {
+            patient: true,
+            items: true,
+            payments: { orderBy: { paidAt: "desc" } },
+          },
+        });
+        await queueRecord(tx, "Invoice", invoice.id, invoice.patientId);
+        await logAudit(tx, "UPDATE", "Invoice", invoice.id);
+        return invoice;
+      }
+
+      if (existing.status === "CANCELLED") {
+        throw new Error("ALREADY_CANCELLED");
+      }
+
+      const nextItems = d.items
+        ? d.items.map((it) => ({
+            description: it.description,
+            quantity: it.quantity,
+            unitPaise: it.unitPaise,
+          }))
+        : existing.items.map((it) => ({
+            description: it.description,
+            quantity: it.quantity,
+            unitPaise: it.unitPaise,
+          }));
+
+      const totals = calculateInvoiceTotals({
+        items: nextItems,
+        discountPaise:
+          d.discountPercent !== undefined
+            ? undefined
+            : d.discountPaise ?? existing.discountPaise,
+        discountPercent: d.discountPercent,
+        taxPaise:
+          d.taxPercent !== undefined
+            ? undefined
+            : d.taxPaise ?? existing.taxPaise,
+        taxPercent: d.taxPercent,
+      });
+
+      if (totals.totalPaise < authoritativePaid) {
+        throw new Error("BELOW_PAID_AMOUNT");
+      }
+
+      const nextStatus = deriveInvoiceStatus(
+        totals.totalPaise,
+        authoritativePaid,
+        existing.status
+      );
+
+      if (d.items) {
+        await tx.invoiceItem.deleteMany({ where: { invoiceId: id } });
       }
 
       const invoice = await tx.invoice.update({
         where: { id },
-        data: { status: "CANCELLED" },
+        data: {
+          discountPaise: totals.discountPaise,
+          taxPaise: totals.taxPaise,
+          totalPaise: totals.totalPaise,
+          paidPaise: authoritativePaid,
+          status: nextStatus,
+          ...(d.items
+            ? {
+                items: {
+                  create: d.items.map((it) => ({
+                    description: it.description,
+                    quantity: it.quantity,
+                    unitPaise: it.unitPaise,
+                  })),
+                },
+              }
+            : {}),
+        },
         include: {
           patient: true,
           items: true,
           payments: { orderBy: { paidAt: "desc" } },
         },
       });
+
       await queueRecord(tx, "Invoice", invoice.id, invoice.patientId);
       await logAudit(tx, "UPDATE", "Invoice", invoice.id);
       return invoice;
@@ -91,10 +175,32 @@ export async function PATCH(
         { status: 400 }
       );
     }
+    if (code === "ALREADY_CANCELLED") {
+      return NextResponse.json(
+        { error: "Cannot modify a cancelled invoice." },
+        { status: 400 }
+      );
+    }
+    if (code === "BELOW_PAID_AMOUNT") {
+      return NextResponse.json(
+        {
+          error:
+            "Updated invoice total cannot be less than the amount already paid.",
+        },
+        { status: 400 }
+      );
+    }
+    if (
+      code.includes("Discount") ||
+      code.includes("Tax") ||
+      code.includes("Line item") ||
+      code.includes("Invoice must")
+    ) {
+      return NextResponse.json({ error: code }, { status: 400 });
+    }
     return NextResponse.json(
       { error: "Unable to update invoice." },
       { status: 503 }
     );
   }
 }
-

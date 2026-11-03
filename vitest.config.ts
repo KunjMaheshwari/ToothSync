@@ -4,7 +4,7 @@ import path from "node:path";
 export default defineConfig({
   test: {
     environment: "node",
-    include: ["tests/**/*.test.ts"],
+    include: ["tests/**/*.test.ts", "tests/e2e/**/*.spec.ts"],
     clearMocks: true,
     fileParallelism: false,
     globalSetup: ["./tests/global-setup.ts"],

@@ -140,9 +140,35 @@ export const invoiceSchema = z
     }
   });
 
-export const invoiceUpdateSchema = z.object({
-  status: z.enum(["CANCELLED"]),
-});
+export const invoiceUpdateSchema = z
+  .object({
+    status: z.enum(["CANCELLED"]).optional(),
+    discountPaise: z.number().int().min(0).optional(),
+    discountPercent: z.number().min(0).max(100).optional(),
+    taxPaise: z.number().int().min(0).optional(),
+    taxPercent: z.number().min(0).max(100).optional(),
+    items: z
+      .array(
+        z.object({
+          description: text(200).min(1, "Description is required"),
+          quantity: z.number().int().min(1).max(100),
+          unitPaise: z.number().int().min(0).max(10_000_000),
+        })
+      )
+      .min(1, "At least one line item is required")
+      .max(100)
+      .optional(),
+  })
+  .refine(
+    (data) =>
+      data.status !== undefined ||
+      data.discountPaise !== undefined ||
+      data.discountPercent !== undefined ||
+      data.taxPaise !== undefined ||
+      data.taxPercent !== undefined ||
+      data.items !== undefined,
+    { message: "At least one invoice field must be provided for update." }
+  );
 
 export const paymentSchema = z.object({
   amountPaise: z

@@ -47,6 +47,12 @@ export async function POST(req: Request) {
     if (!appt) {
       return NextResponse.json({ error: "Linked appointment not found." }, { status: 404 });
     }
+    if (appt.patientId !== d.patientId) {
+      return NextResponse.json(
+        { error: "Linked appointment does not belong to the selected patient." },
+        { status: 400 }
+      );
+    }
   }
 
   const record = await db.$transaction(async (tx) => {

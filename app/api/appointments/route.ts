@@ -47,6 +47,7 @@ export async function POST(req: Request) {
     db.patient.findFirst({ where: { id: d.patientId, deletedAt: null } }),
     db.appointment.findFirst({
       where: {
+        patient: { deletedAt: null },
         status: { notIn: ["CANCELLED", "COMPLETED"] },
         startsAt: { lt: endsAt },
         endsAt: { gt: startsAt },
