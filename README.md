@@ -1,6 +1,6 @@
-# DentalCare
+# Doctor Kinjal Maheshwari's Patient Tracker
 
-Local-first dental clinic management for one doctor. The browser UI is protected by a signed HTTP-only session; clinic records are stored in SQLite and are queued for Google Sheets reporting after each local write.
+Local-first dental clinic management for Doctor Kinjal Maheshwari. The browser UI is protected by a signed HTTP-only session; clinic records are stored in SQLite and are queued for Google Sheets reporting after each local write.
 
 ## Run locally
 

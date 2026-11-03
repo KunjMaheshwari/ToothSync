@@ -50,7 +50,10 @@ type Dash = {
   recent: any[];
   upcomingAppointments?: any[];
   dueFollowUps?: any[];
+  recentPatients?: any[];
+  outstandingInvoices?: any[];
   treatmentsCount?: number;
+  completedTreatmentsCount?: number;
   prescriptionsCount?: number;
   billingSummary?: {
     totalBilledPaise: number;
@@ -75,16 +78,33 @@ type ToastItem = {
   kind: "success" | "error" | "info";
 };
 
-const nav = [
-  ["Dashboard", Home],
-  ["Patients", Users],
-  ["Appointments", CalendarDays],
-  ["Treatments", Activity],
-  ["Prescriptions", FileText],
-  ["Billing", CircleDollarSign],
-  ["Follow-ups", ClipboardList],
-  ["Reports", Activity],
-  ["Settings", Settings],
+const APP_NAME = "Doctor Kinjal Maheshwari's Patient Tracker";
+
+const navGroups = [
+  {
+    label: "Overview",
+    items: [
+      ["Dashboard", Home],
+      ["Patients", Users],
+      ["Appointments", CalendarDays],
+    ] as const,
+  },
+  {
+    label: "Clinical Care",
+    items: [
+      ["Treatments", Activity],
+      ["Prescriptions", FileText],
+      ["Follow-ups", ClipboardList],
+    ] as const,
+  },
+  {
+    label: "Finance & System",
+    items: [
+      ["Billing", CircleDollarSign],
+      ["Reports", Receipt],
+      ["Settings", Settings],
+    ] as const,
+  },
 ] as const;
 
 const money = (paise: number) => formatINR(paise);
@@ -151,6 +171,8 @@ export default function ClinicApp() {
   const [dash, setDash] = useState<Dash | null>(null);
   const [patients, setPatients] = useState<any[]>([]);
   const [q, setQ] = useState("");
+  const [patientFilter, setPatientFilter] = useState<"ALL" | "ALERTS">("ALL");
+  const [patientSort, setPatientSort] = useState<"RECENT" | "NAME">("RECENT");
   const [searching, setSearching] = useState(false);
   const [searchError, setSearchError] = useState("");
   const [message, setMessage] = useState("");
@@ -168,9 +190,9 @@ export default function ClinicApp() {
     null
   );
   const [loadingPatientDetail, setLoadingPatientDetail] = useState(false);
-  const [patientModalTab, setPatientModalTab] = useState<"overview" | "edit">(
-    "overview"
-  );
+  const [patientModalTab, setPatientModalTab] = useState<
+    "overview" | "clinical" | "billing" | "edit"
+  >("overview");
 
   const [printPrescription, setPrintPrescription] = useState<any | null>(null);
 
@@ -252,7 +274,10 @@ export default function ClinicApp() {
   }, [q, page, loadPatients]);
 
   const openPatientDetail = useCallback(
-    async (id: string, initialTab: "overview" | "edit" = "overview") => {
+    async (
+      id: string,
+      initialTab: "overview" | "clinical" | "billing" | "edit" = "overview"
+    ) => {
       setActivePatientId(id);
       setPatientModalTab(initialTab);
       setLoadingPatientDetail(true);
@@ -311,23 +336,45 @@ export default function ClinicApp() {
   }
 
   const formattedDate = useMemo(() => {
-    if (!mounted) return "DENTALCARE WORKSPACE";
-    return new Intl.DateTimeFormat("en-IN", {
-      weekday: "long",
+    if (!mounted) return "DOCTOR KINJAL MAHESHWARI'S PATIENT TRACKER";
+    const dateStr = new Intl.DateTimeFormat("en-IN", {
+      weekday: "short",
       day: "numeric",
-      month: "long",
+      month: "short",
+      year: "numeric",
     })
       .format(new Date())
       .toUpperCase();
+    return `DOCTOR KINJAL MAHESHWARI'S PATIENT TRACKER · ${dateStr}`;
   }, [mounted]);
 
-  const greeting = useMemo(() => {
-    if (!mounted) return "Welcome back, Dr. Kinjal.";
-    const hr = new Date().getHours();
-    const prefix =
-      hr < 12 ? "Good morning" : hr < 18 ? "Good afternoon" : "Good evening";
-    return `${prefix}, Dr. Kinjal.`;
-  }, [mounted]);
+  const displayedPatients = useMemo(() => {
+    const list = patients.filter((p) => {
+      if (patientFilter === "ALERTS") {
+        const hasAllergy =
+          p.allergies &&
+          !["none", "none known", "nil", "n/a"].includes(
+            String(p.allergies).trim().toLowerCase()
+          );
+        const hasCondition =
+          p.conditions &&
+          !["none", "nil", "n/a"].includes(
+            String(p.conditions).trim().toLowerCase()
+          );
+        return Boolean(hasAllergy || hasCondition);
+      }
+      return true;
+    });
+
+    if (patientSort === "NAME") {
+      return [...list].sort((a, b) =>
+        `${a.firstName} ${a.lastName}`.localeCompare(
+          `${b.firstName} ${b.lastName}`
+        )
+      );
+    }
+    return list;
+  }, [patients, patientFilter, patientSort]);
 
   function navigateWithPatient(targetPage: string, patientId?: string) {
     if (patientId) setSelectedPatientId(patientId);
@@ -348,14 +395,13 @@ export default function ClinicApp() {
       <div className="topbar">
         <div>
           <p className="eyebrow">
-            {page === "Dashboard" ? formattedDate : "DENTALCARE WORKSPACE"}
+            {page === "Dashboard"
+              ? formattedDate
+              : "DOCTOR KINJAL MAHESHWARI'S PATIENT TRACKER"}
           </p>
           <h1 className="title">{title}</h1>
           <p className="sub">
-            {subtitle ||
-              (page === "Dashboard"
-                ? greeting
-                : "Everything stays securely on this device first.")}
+            {subtitle || "Here's your clinic overview for today."}
           </p>
         </div>
         <div className="toolbar">
@@ -365,7 +411,7 @@ export default function ClinicApp() {
             aria-label="Toggle theme"
             title={dark ? "Switch to light mode" : "Switch to dark mode"}
           >
-            {dark ? <Sun size={17} /> : <Moon size={17} />}
+            {dark ? <Sun size={16} /> : <Moon size={16} />}
           </button>
           {children}
         </div>
@@ -374,6 +420,10 @@ export default function ClinicApp() {
   }
 
   function Dashboard() {
+    const billing = dash?.billingSummary;
+    const completedTreatments =
+      dash?.completedTreatmentsCount ?? dash?.treatmentsCount ?? "—";
+
     const metrics = [
       ["Total patients", dash?.patients ?? "—", Users, "Patients"],
       [
@@ -382,15 +432,31 @@ export default function ClinicApp() {
         CalendarDays,
         "Appointments",
       ],
-      ["Completed", dash?.completed ?? "—", CheckCircle2, "Appointments"],
-      ["Upcoming", dash?.upcoming ?? "—", Clock, "Appointments"],
       [
-        "Pending payments",
-        dash ? money(dash.pending) : "—",
+        "Completed treatments",
+        dash ? completedTreatments : "—",
+        CheckCircle2,
+        "Treatments",
+      ],
+      ["Pending follow-ups", dash?.followups ?? "—", ClipboardList, "Follow-ups"],
+      [
+        "Total billing",
+        dash ? money(billing?.totalBilledPaise ?? 0) : "—",
+        Receipt,
+        "Billing",
+      ],
+      [
+        "Payments received",
+        dash ? money(billing?.totalCollectedPaise ?? 0) : "—",
         CircleDollarSign,
         "Billing",
       ],
-      ["Follow-ups due", dash?.followups ?? "—", ClipboardList, "Follow-ups"],
+      [
+        "Outstanding balances",
+        dash ? money(dash.pending) : "—",
+        CreditCard,
+        "Billing",
+      ],
     ];
 
     async function quickAppointmentStatus(id: string, status: string) {
@@ -407,15 +473,34 @@ export default function ClinicApp() {
       }
     }
 
-    const scheduleList = dash?.recent?.length
-      ? dash.recent
-      : dash?.upcomingAppointments || [];
-    const showingUpcomingFallback =
-      !dash?.recent?.length && (dash?.upcomingAppointments?.length || 0) > 0;
+    async function quickCompleteFollowUp(id: string) {
+      const r = await fetch(`/api/follow-ups/${id}`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ status: "COMPLETED" }),
+      });
+      if (r.ok) {
+        pushToast("Follow-up marked as completed.");
+        refreshDashboard();
+      } else {
+        pushToast("Could not update follow-up.", "error");
+      }
+    }
+
+    const todayList = dash?.recent || [];
+    const upcomingList = dash?.upcomingAppointments || [];
+    const recentPatientRows = (
+      dash?.recentPatients?.length ? dash.recentPatients : patients
+    ).slice(0, 5);
+    const dueFollowUpRows = dash?.dueFollowUps || [];
+    const outstandingInvoiceRows = dash?.outstandingInvoices || [];
 
     return (
       <>
-        <Header title="Your practice, in view.">
+        <Header
+          title="Welcome Doctor Kinjal Maheshwari"
+          subtitle="Here's your clinic overview for today."
+        >
           <button className="btn" onClick={() => setPage("Appointments")}>
             <CalendarDays size={15} /> Schedule
           </button>
@@ -423,11 +508,12 @@ export default function ClinicApp() {
             className="btn primary"
             onClick={() => setPage("Add patient")}
           >
-            <Plus size={16} /> New patient
+            <Plus size={15} /> New patient
           </button>
         </Header>
 
-        <div className="metrics">
+        {/* Compact 7-card Clinic Overview Strip */}
+        <div className="metrics-7">
           {metrics.map(([l, v, I, targetPage]: any) => (
             <div
               className="metric"
@@ -443,7 +529,7 @@ export default function ClinicApp() {
               <div className="label">
                 <span>{l}</span>
                 <span className="label-icon">
-                  <I size={15} />
+                  <I size={14} />
                 </span>
               </div>
               <b>{v}</b>
@@ -451,44 +537,29 @@ export default function ClinicApp() {
           ))}
         </div>
 
-        <div className="grid">
+        {/* Row 1: Today's Appointments & Upcoming Appointments */}
+        <div className="dashboard-grid-primary">
           <section className="card">
             <div className="card-header">
               <div>
-                <h2>
-                  {showingUpcomingFallback
-                    ? "Upcoming schedule"
-                    : "Today’s schedule"}
-                </h2>
-                {showingUpcomingFallback && (
-                  <p className="sub" style={{ fontSize: 12.5 }}>
-                    No visits remaining today · showing next scheduled
-                    appointments
-                  </p>
-                )}
+                <h2>Today’s appointments</h2>
+                <p className="sub" style={{ fontSize: 12 }}>
+                  Chairside schedule and visit completion status for today
+                </p>
               </div>
               <button
                 className="btn sm subtle"
                 onClick={() => setPage("Appointments")}
               >
-                View all <ChevronRight size={14} />
+                View schedule <ChevronRight size={13} />
               </button>
             </div>
 
             <div className="schedule">
-              {scheduleList.length ? (
-                scheduleList.map((a: any) => (
+              {todayList.length ? (
+                todayList.map((a: any) => (
                   <div className="appointment" key={a.id}>
                     <span className="time">
-                      {showingUpcomingFallback && (
-                        <>
-                          {new Date(a.startsAt).toLocaleDateString("en-IN", {
-                            day: "numeric",
-                            month: "short",
-                          })}
-                          <br />
-                        </>
-                      )}
                       {new Date(a.startsAt).toLocaleTimeString([], {
                         hour: "2-digit",
                         minute: "2-digit",
@@ -516,7 +587,6 @@ export default function ClinicApp() {
                         display: "flex",
                         alignItems: "center",
                         gap: 6,
-                        flexWrap: "wrap",
                         justifyContent: "flex-end",
                       }}
                     >
@@ -536,23 +606,23 @@ export default function ClinicApp() {
                           onClick={() =>
                             quickAppointmentStatus(a.id, "COMPLETED")
                           }
-                          style={{ padding: "5px 8px", minHeight: 30 }}
+                          style={{ padding: "4px 8px", minHeight: 28 }}
                         >
-                          <Check size={14} />
+                          <Check size={13} />
                         </button>
                       )}
                     </div>
                   </div>
                 ))
               ) : (
-                <div className="empty">
-                  No appointments scheduled today.
-                  <div style={{ marginTop: 12 }}>
+                <div className="empty" style={{ padding: "26px 16px" }}>
+                  No visits remaining for today.
+                  <div style={{ marginTop: 10 }}>
                     <button
                       className="btn sm subtle"
                       onClick={() => setPage("Appointments")}
                     >
-                      <Plus size={14} /> Book an appointment
+                      <Plus size={13} /> Book an appointment
                     </button>
                   </div>
                 </div>
@@ -561,7 +631,223 @@ export default function ClinicApp() {
           </section>
 
           <section className="card">
-            <h2>Quick actions</h2>
+            <div className="card-header">
+              <div>
+                <h2>Upcoming appointments</h2>
+                <p className="sub" style={{ fontSize: 12 }}>
+                  Next confirmed visits in the clinical calendar
+                </p>
+              </div>
+              <button
+                className="btn sm subtle"
+                onClick={() => setPage("Appointments")}
+              >
+                Book visit <Plus size={13} />
+              </button>
+            </div>
+
+            <div className="schedule">
+              {upcomingList.length ? (
+                upcomingList.slice(0, 5).map((a: any) => (
+                  <div className="appointment" key={a.id}>
+                    <span className="time">
+                      {new Date(a.startsAt).toLocaleDateString("en-IN", {
+                        day: "numeric",
+                        month: "short",
+                      })}
+                      <br />
+                      {new Date(a.startsAt).toLocaleTimeString([], {
+                        hour: "2-digit",
+                        minute: "2-digit",
+                      })}
+                    </span>
+                    <div
+                      style={{ cursor: "pointer" }}
+                      onClick={() =>
+                        a.patient?.id && openPatientDetail(a.patient.id)
+                      }
+                    >
+                      <b>
+                        {a.patient?.firstName} {a.patient?.lastName}
+                      </b>
+                      <div className="sub">
+                        {a.type} · {a.patient?.patientId}
+                      </div>
+                    </div>
+                    <span
+                      className={`status ${String(
+                        a.status || ""
+                      ).toLowerCase()}`}
+                    >
+                      {a.status}
+                    </span>
+                  </div>
+                ))
+              ) : (
+                <div className="empty" style={{ padding: "26px 16px" }}>
+                  No upcoming appointments scheduled.
+                </div>
+              )}
+            </div>
+          </section>
+        </div>
+
+        {/* Row 2: Recent Patients, Pending Payments / Invoices, Follow-ups Requiring Attention */}
+        <div className="dashboard-grid-secondary">
+          <section className="card">
+            <div className="card-header">
+              <h2>Recent patients</h2>
+              <button
+                className="btn sm subtle"
+                onClick={() => setPage("Patients")}
+              >
+                Directory <ChevronRight size={13} />
+              </button>
+            </div>
+            <div className="schedule">
+              {recentPatientRows.length ? (
+                recentPatientRows.map((p: any) => (
+                  <div
+                    className="appointment"
+                    key={p.id}
+                    style={{
+                      gridTemplateColumns: "minmax(0, 1fr) auto",
+                      cursor: "pointer",
+                    }}
+                    onClick={() => openPatientDetail(p.id)}
+                  >
+                    <div>
+                      <span className="avatar">
+                        {p.firstName?.[0]}
+                        {p.lastName?.[0]}
+                      </span>
+                      <b>
+                        {p.firstName} {p.lastName}
+                      </b>
+                      <div className="sub">
+                        {p.patientId} · {p.phone}
+                      </div>
+                    </div>
+                    <span className="status scheduled">Profile</span>
+                  </div>
+                ))
+              ) : (
+                <div className="empty" style={{ padding: "22px 12px" }}>
+                  No patients registered yet.
+                </div>
+              )}
+            </div>
+          </section>
+
+          <section className="card">
+            <div className="card-header">
+              <h2>Pending payments</h2>
+              <button
+                className="btn sm subtle"
+                onClick={() => setPage("Billing")}
+              >
+                Billing ledger <ChevronRight size={13} />
+              </button>
+            </div>
+            <div className="schedule">
+              {outstandingInvoiceRows.length ? (
+                outstandingInvoiceRows.map((inv: any) => (
+                  <div
+                    className="appointment"
+                    key={inv.id}
+                    style={{ gridTemplateColumns: "minmax(0, 1fr) auto" }}
+                  >
+                    <div>
+                      <b>
+                        {inv.patientName || "Patient"} · {inv.invoiceNumber}
+                      </b>
+                      <div className="sub tabular">
+                        Paid {money(inv.paidPaise)} of {money(inv.totalPaise)}
+                      </div>
+                    </div>
+                    <span className="status pending tabular">
+                      Due {money(inv.outstandingPaise)}
+                    </span>
+                  </div>
+                ))
+              ) : (
+                <div className="empty" style={{ padding: "22px 12px" }}>
+                  <CheckCircle2
+                    size={20}
+                    style={{
+                      color: "var(--green)",
+                      margin: "0 auto 6px",
+                      display: "block",
+                    }}
+                  />
+                  All active invoices are settled ({money(0)} outstanding).
+                </div>
+              )}
+            </div>
+          </section>
+
+          <section className="card">
+            <div className="card-header">
+              <h2>Follow-ups requiring attention</h2>
+              <button
+                className="btn sm subtle"
+                onClick={() => setPage("Follow-ups")}
+              >
+                All recalls <ChevronRight size={13} />
+              </button>
+            </div>
+            <div className="schedule">
+              {dueFollowUpRows.length ? (
+                dueFollowUpRows.map((f: any) => (
+                  <div
+                    className="appointment"
+                    key={f.id}
+                    style={{ gridTemplateColumns: "minmax(0, 1fr) auto" }}
+                  >
+                    <div
+                      style={{ cursor: "pointer" }}
+                      onClick={() =>
+                        f.patient?.id && openPatientDetail(f.patient.id)
+                      }
+                    >
+                      <b>
+                        {f.patient?.firstName} {f.patient?.lastName}
+                      </b>
+                      <div className="sub">
+                        {f.reason} · Due{" "}
+                        {new Date(f.dueDate).toLocaleDateString("en-IN", {
+                          day: "numeric",
+                          month: "short",
+                        })}
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      className="btn sm subtle"
+                      onClick={() => quickCompleteFollowUp(f.id)}
+                    >
+                      <Check size={13} /> Done
+                    </button>
+                  </div>
+                ))
+              ) : (
+                <div className="empty" style={{ padding: "22px 12px" }}>
+                  No pending follow-ups requiring immediate attention.
+                </div>
+              )}
+            </div>
+          </section>
+        </div>
+
+        {/* Row 3: Quick Actions & Google Sheets Synchronization Status */}
+        <div className="grid">
+          <section className="card">
+            <div className="card-header">
+              <h2>Quick clinical actions</h2>
+              <span className="sub" style={{ fontSize: 12 }}>
+                Direct chairside shortcuts
+              </span>
+            </div>
             <div className="actions">
               {[
                 [Users, "Register patient", "Add patient"],
@@ -577,53 +863,68 @@ export default function ClinicApp() {
                     onClick={() => setPage(to)}
                     key={label}
                   >
-                    <Icon size={20} />
+                    <Icon size={19} />
                     <span>{label}</span>
                   </button>
                 );
               })}
             </div>
+          </section>
+
+          <section className="card">
+            <div className="card-header">
+              <div>
+                <h2>Google Sheets synchronization</h2>
+                <p className="sub" style={{ fontSize: 12 }}>
+                  Local SQLite database is authoritative · background queue
+                  syncs idempotently
+                </p>
+              </div>
+              {dash?.syncStatus && (
+                <span
+                  className={`status ${
+                    dash.syncStatus.failed > 0
+                      ? "failed"
+                      : dash.syncStatus.pending > 0
+                      ? "pending"
+                      : "synced"
+                  }`}
+                >
+                  {dash.syncStatus.pending > 0
+                    ? `${dash.syncStatus.pending} Pending`
+                    : dash.syncStatus.failed > 0
+                    ? `${dash.syncStatus.failed} Retry`
+                    : `${dash.syncStatus.synced} Synced`}
+                </span>
+              )}
+            </div>
 
             <div
               style={{
-                marginTop: 22,
-                paddingTop: 18,
-                borderTop: "1px solid var(--line)",
                 display: "flex",
                 justifyContent: "space-between",
                 alignItems: "center",
                 gap: 12,
+                padding: "12px 14px",
+                borderRadius: 12,
+                background: "var(--surface-subtle)",
+                border: "1px solid var(--line)",
                 flexWrap: "wrap",
               }}
             >
-              <div>
-                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                  <b>Google Sheets</b>
-                  {dash?.syncStatus && (
-                    <span
-                      className={`status ${
-                        dash.syncStatus.failed > 0
-                          ? "failed"
-                          : dash.syncStatus.pending > 0
-                          ? "pending"
-                          : "synced"
-                      }`}
-                    >
-                      {dash.syncStatus.pending > 0
-                        ? `${dash.syncStatus.pending} Pending`
-                        : dash.syncStatus.failed > 0
-                        ? `${dash.syncStatus.failed} Retry`
-                        : `${dash.syncStatus.synced} Synced`}
-                    </span>
-                  )}
-                </div>
-                <div className="sub">Local data remains authoritative</div>
+              <div className="sub" style={{ fontSize: 12.5 }}>
+                {dash?.syncStatus?.lastSync
+                  ? `Last synced: ${new Date(
+                      dash.syncStatus.lastSync
+                    ).toLocaleString("en-IN")}`
+                  : "All clinical & financial records preserved locally"}
               </div>
               <button className="btn" onClick={sync} disabled={syncing}>
-                <RefreshCw size={15} className={syncing ? "spin" : ""} />
+                <RefreshCw size={14} className={syncing ? "spin" : ""} />
                 {syncing ? "Syncing…" : "Sync now"}
               </button>
             </div>
+
             {message && (
               <p
                 className="sub"
@@ -649,13 +950,13 @@ export default function ClinicApp() {
       <>
         <Header
           title="Patients"
-          subtitle="Search, inspect clinical histories, or register a new patient record."
+          subtitle="Search, filter, inspect 360° clinical histories, or register a new patient record."
         >
           <button
             className="btn primary"
             onClick={() => setPage("Add patient")}
           >
-            <Plus size={16} /> Add patient
+            <Plus size={15} /> Add patient
           </button>
         </Header>
 
@@ -665,15 +966,16 @@ export default function ClinicApp() {
               style={{
                 position: "relative",
                 flex: 1,
+                minWidth: 240,
                 display: "flex",
                 alignItems: "center",
               }}
             >
               <Search
-                size={17}
+                size={16}
                 style={{
                   position: "absolute",
-                  left: 13,
+                  left: 12,
                   color: "var(--muted)",
                   pointerEvents: "none",
                 }}
@@ -684,7 +986,7 @@ export default function ClinicApp() {
                 placeholder="Search name, ID, phone or email"
                 value={q}
                 onChange={(e) => setQ(e.target.value)}
-                style={{ paddingLeft: 38, paddingRight: q ? 36 : 13 }}
+                style={{ paddingLeft: 36, paddingRight: q ? 34 : 12 }}
               />
               {q && (
                 <button
@@ -704,17 +1006,49 @@ export default function ClinicApp() {
                 </button>
               )}
             </div>
+
+            <div className="segmented" aria-label="Filter patients">
+              <button
+                type="button"
+                className={patientFilter === "ALL" ? "active" : ""}
+                onClick={() => setPatientFilter("ALL")}
+              >
+                All ({patients.length})
+              </button>
+              <button
+                type="button"
+                className={patientFilter === "ALERTS" ? "active" : ""}
+                onClick={() => setPatientFilter("ALERTS")}
+              >
+                Medical Alerts
+              </button>
+            </div>
+
+            <div className="segmented" aria-label="Sort patients">
+              <button
+                type="button"
+                className={patientSort === "RECENT" ? "active" : ""}
+                onClick={() => setPatientSort("RECENT")}
+              >
+                Recent
+              </button>
+              <button
+                type="button"
+                className={patientSort === "NAME" ? "active" : ""}
+                onClick={() => setPatientSort("NAME")}
+              >
+                Name A–Z
+              </button>
+            </div>
+
             {searching && (
               <LoaderCircle
                 className="spin"
-                size={18}
+                size={17}
                 aria-label="Searching"
                 style={{ color: "var(--blue)" }}
               />
             )}
-            <span className="sub" style={{ fontSize: 13 }}>
-              {patients.length} {patients.length === 1 ? "patient" : "patients"}
-            </span>
           </div>
 
           {searchError && (
@@ -736,8 +1070,8 @@ export default function ClinicApp() {
                 </tr>
               </thead>
               <tbody>
-                {patients.length ? (
-                  patients.map((p) => {
+                {displayedPatients.length ? (
+                  displayedPatients.map((p) => {
                     const hasAllergy =
                       p.allergies &&
                       !["none", "none known", "nil", "n/a"].includes(
@@ -780,7 +1114,7 @@ export default function ClinicApp() {
                             {p.patientId}
                           </span>
                           {p.referenceId && (
-                            <div className="sub" style={{ fontSize: 12 }}>
+                            <div className="sub" style={{ fontSize: 11.5 }}>
                               Ref: {p.referenceId}
                             </div>
                           )}
@@ -799,7 +1133,7 @@ export default function ClinicApp() {
                               {p.conditions}
                             </span>
                           ) : (
-                            <span className="sub" style={{ fontSize: 13 }}>
+                            <span className="sub" style={{ fontSize: 12.5 }}>
                               None noted
                             </span>
                           )}
@@ -824,7 +1158,7 @@ export default function ClinicApp() {
                               onClick={() => openPatientDetail(p.id)}
                               aria-label={`Actions for ${p.firstName} ${p.lastName}`}
                             >
-                              <Eye size={14} /> Profile
+                              <Eye size={13} /> 360° Profile
                             </button>
                             <button
                               type="button"
@@ -832,9 +1166,9 @@ export default function ClinicApp() {
                               title="Edit patient"
                               aria-label={`Edit ${p.firstName} ${p.lastName}`}
                               onClick={() => openPatientDetail(p.id, "edit")}
-                              style={{ minHeight: 31, padding: "4px 8px" }}
+                              style={{ minHeight: 30, padding: "4px 8px" }}
                             >
-                              <MoreHorizontal size={16} />
+                              <MoreHorizontal size={15} />
                             </button>
                           </div>
                         </td>
@@ -846,8 +1180,8 @@ export default function ClinicApp() {
                     <td colSpan={6} className="empty">
                       {searching
                         ? "Searching patients…"
-                        : q
-                        ? "No matching patients. Try a name, ID, phone, or email."
+                        : q || patientFilter !== "ALL"
+                        ? "No matching patients. Try adjusting your search or filter."
                         : "No patients found. Register your first patient to begin."}
                     </td>
                   </tr>
@@ -964,7 +1298,7 @@ export default function ClinicApp() {
             </label>
           </div>
 
-          <h2 style={{ marginTop: 28 }}>Clinical history</h2>
+          <h2 style={{ marginTop: 26 }}>Clinical history</h2>
           <div className="form-grid">
             <label className="field">
               Known allergies
@@ -994,8 +1328,8 @@ export default function ClinicApp() {
                   display: "flex",
                   alignItems: "center",
                   gap: 10,
-                  padding: "12px 14px",
-                  borderRadius: 12,
+                  padding: "11px 13px",
+                  borderRadius: 11,
                   border: "1px solid var(--line-strong)",
                   background: "var(--bg)",
                   marginTop: 2,
@@ -1005,7 +1339,7 @@ export default function ClinicApp() {
                   type="checkbox"
                   name="consented"
                   defaultChecked
-                  style={{ width: 18, height: 18 }}
+                  style={{ width: 17, height: 17 }}
                 />
                 <span className="sub" style={{ color: "var(--ink)" }}>
                   Patient informed consent recorded for examination and local
@@ -1045,7 +1379,7 @@ export default function ClinicApp() {
               display: "flex",
               justifyContent: "flex-end",
               gap: 10,
-              marginTop: 25,
+              marginTop: 24,
             }}
           >
             <button
@@ -1505,6 +1839,7 @@ export default function ClinicApp() {
           prev.map((t) => (t.id === id ? updated : t))
         );
         pushToast(`Treatment marked as ${status.toLowerCase()}.`);
+        refreshDashboard();
       } else {
         pushToast("Unable to update treatment status.", "error");
       }
@@ -1969,7 +2304,7 @@ export default function ClinicApp() {
                 <div
                   key={idx}
                   style={{
-                    padding: 16,
+                    padding: 15,
                     borderRadius: 14,
                     border: "1px solid var(--line)",
                     background: "var(--surface-subtle)",
@@ -2135,7 +2470,7 @@ export default function ClinicApp() {
                       className="btn sm subtle"
                       onClick={() => setPrintPrescription(rx)}
                     >
-                      <Printer size={14} /> Rx Sheet
+                      <Printer size={13} /> Rx Sheet
                     </button>
                   </div>
                 ))
@@ -2157,7 +2492,6 @@ export default function ClinicApp() {
     const [isError, setIsError] = useState(false);
     const [statusFilter, setStatusFilter] = useState<string>("ALL");
 
-    // Invoice form state
     const [invPatientId, setInvPatientId] = useState(
       billingDraft?.patientId || selectedPatientId || ""
     );
@@ -2175,7 +2509,6 @@ export default function ClinicApp() {
       },
     ]);
 
-    // Payment Modal State
     const [paymentInvoice, setPaymentInvoice] = useState<any | null>(null);
     const [paymentAmountRupees, setPaymentAmountRupees] = useState("");
     const [paymentMethod, setPaymentMethod] = useState<
@@ -2187,7 +2520,6 @@ export default function ClinicApp() {
     const [recordingPayment, setRecordingPayment] = useState(false);
     const [paymentError, setPaymentError] = useState("");
 
-    // Invoice Detail & Payment History Modal State
     const [inspectInvoice, setInspectInvoice] = useState<any | null>(null);
 
     const fetchInvoices = useCallback(async () => {
@@ -2250,7 +2582,6 @@ export default function ClinicApp() {
       }
     }, [lineItems, discountMode, discountInput, taxMode, taxInput]);
 
-    // Authoritative ledger totals across all non-cancelled invoices
     const ledgerMetrics = useMemo(() => {
       let totalBilled = 0;
       let totalPaid = 0;
@@ -2450,7 +2781,7 @@ export default function ClinicApp() {
             <div className="label">
               <span>Total Billed</span>
               <span className="label-icon">
-                <Receipt size={15} />
+                <Receipt size={14} />
               </span>
             </div>
             <b className="tabular">{money(ledgerMetrics.totalBilled)}</b>
@@ -2459,7 +2790,7 @@ export default function ClinicApp() {
             <div className="label">
               <span>Amount Paid</span>
               <span className="label-icon">
-                <CheckCircle2 size={15} />
+                <CheckCircle2 size={14} />
               </span>
             </div>
             <b className="tabular" style={{ color: "var(--green)" }}>
@@ -2470,7 +2801,7 @@ export default function ClinicApp() {
             <div className="label">
               <span>Remaining Balance</span>
               <span className="label-icon">
-                <CreditCard size={15} />
+                <CreditCard size={14} />
               </span>
             </div>
             <b
@@ -2489,7 +2820,7 @@ export default function ClinicApp() {
             <div className="label">
               <span>Discounts Granted</span>
               <span className="label-icon">
-                <CircleDollarSign size={15} />
+                <CircleDollarSign size={14} />
               </span>
             </div>
             <b className="tabular">{money(ledgerMetrics.totalDiscounts)}</b>
@@ -2949,7 +3280,7 @@ export default function ClinicApp() {
                                     title="Cancel unpaid invoice"
                                     aria-label={`Cancel ${inv.invoiceNumber}`}
                                     onClick={() => handleCancelInvoice(inv)}
-                                    style={{ minHeight: 31, padding: "4px 8px" }}
+                                    style={{ minHeight: 30, padding: "4px 8px" }}
                                   >
                                     <Ban size={14} />
                                   </button>
@@ -3169,7 +3500,8 @@ export default function ClinicApp() {
                     <div className="card-header">
                       <div>
                         <p className="eyebrow">
-                          INVOICE LEDGER · {inspectInvoice.invoiceNumber}
+                          {APP_NAME.toUpperCase()} ·{" "}
+                          {inspectInvoice.invoiceNumber}
                         </p>
                         <h2 style={{ fontSize: 24, marginTop: 4 }}>
                           {inspectInvoice.patient?.firstName}{" "}
@@ -3659,7 +3991,7 @@ export default function ClinicApp() {
                               updateFollowUpStatus(f.id, "COMPLETED")
                             }
                           >
-                            <Check size={14} /> Done
+                            <Check size={13} /> Done
                           </button>
                         )}
                       </div>
@@ -3692,7 +4024,7 @@ export default function ClinicApp() {
           subtitle="Real-time clinical volume, revenue collection, and audit metrics computed from SQLite."
         >
           <button className="btn" onClick={refreshDashboard}>
-            <RefreshCw size={15} /> Refresh metrics
+            <RefreshCw size={14} /> Refresh metrics
           </button>
         </Header>
 
@@ -3713,7 +4045,7 @@ export default function ClinicApp() {
               <div className="label">
                 <span>{label}</span>
                 <span className="label-icon">
-                  <Icon size={15} />
+                  <Icon size={14} />
                 </span>
               </div>
               <b>{value}</b>
@@ -3726,7 +4058,7 @@ export default function ClinicApp() {
             <h2>Financial & clinical summary</h2>
             <p className="sub" style={{ marginBottom: 18 }}>
               These metrics are calculated directly from authoritative local
-              SQLite records.
+              SQLite records in {APP_NAME}.
             </p>
             <div className="schedule">
               <div className="appointment">
@@ -3824,7 +4156,7 @@ export default function ClinicApp() {
           subtitle="Manage clinic appearance, Google Sheets synchronization queue, and session security."
         >
           <button className="btn danger" onClick={signOut}>
-            <LogOut size={15} /> Sign out
+            <LogOut size={14} /> Sign out
           </button>
         </Header>
 
@@ -3878,8 +4210,8 @@ export default function ClinicApp() {
                 <div>
                   <b>Doctor access</b>
                   <div className="sub">
-                    DentalCare is restricted to the configured single-doctor
-                    account (Dr. Kinjal) via HTTP-only signed JWT session.
+                    {APP_NAME} is restricted to Dr. Kinjal Maheshwari via an
+                    HTTP-only signed JWT session.
                   </div>
                 </div>
                 <button className="btn sm danger" onClick={signOut}>
@@ -4078,11 +4410,11 @@ export default function ClinicApp() {
             </div>
           ) : (
             <>
-              <div className="card-header" style={{ marginBottom: 20 }}>
+              <div className="card-header" style={{ marginBottom: 18 }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
                   <span
                     className="avatar"
-                    style={{ width: 52, height: 52, fontSize: 18, margin: 0 }}
+                    style={{ width: 50, height: 50, fontSize: 17, margin: 0 }}
                   >
                     {p.firstName?.[0]}
                     {p.lastName?.[0]}
@@ -4092,7 +4424,7 @@ export default function ClinicApp() {
                       {p.patientId}
                       {p.referenceId ? ` · REF ${p.referenceId}` : ""}
                     </p>
-                    <h2 style={{ fontSize: 26, margin: "2px 0" }}>
+                    <h2 style={{ fontSize: 25, margin: "2px 0" }}>
                       {p.firstName} {p.lastName}
                     </h2>
                     <div className="sub">
@@ -4104,14 +4436,35 @@ export default function ClinicApp() {
                   </div>
                 </div>
 
-                <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                <div
+                  style={{
+                    display: "flex",
+                    gap: 8,
+                    alignItems: "center",
+                    flexWrap: "wrap",
+                  }}
+                >
                   <div className="segmented">
                     <button
                       type="button"
                       className={patientModalTab === "overview" ? "active" : ""}
                       onClick={() => setPatientModalTab("overview")}
                     >
-                      360° Chart
+                      360° Overview
+                    </button>
+                    <button
+                      type="button"
+                      className={patientModalTab === "clinical" ? "active" : ""}
+                      onClick={() => setPatientModalTab("clinical")}
+                    >
+                      Visits & Treatments
+                    </button>
+                    <button
+                      type="button"
+                      className={patientModalTab === "billing" ? "active" : ""}
+                      onClick={() => setPatientModalTab("billing")}
+                    >
+                      Rx & Billing
                     </button>
                     <button
                       type="button"
@@ -4130,7 +4483,7 @@ export default function ClinicApp() {
                       setActivePatientDetail(null);
                     }}
                   >
-                    <X size={17} />
+                    <X size={16} />
                   </button>
                 </div>
               </div>
@@ -4140,8 +4493,8 @@ export default function ClinicApp() {
                   display: "flex",
                   gap: 8,
                   flexWrap: "wrap",
-                  marginBottom: 20,
-                  paddingBottom: 16,
+                  marginBottom: 18,
+                  paddingBottom: 14,
                   borderBottom: "1px solid var(--line)",
                 }}
               >
@@ -4150,40 +4503,40 @@ export default function ClinicApp() {
                   className="btn sm primary"
                   onClick={() => navigateWithPatient("Appointments", p.id)}
                 >
-                  <CalendarDays size={14} /> Book Visit
+                  <CalendarDays size={13} /> Book Visit
                 </button>
                 <button
                   type="button"
                   className="btn sm subtle"
                   onClick={() => navigateWithPatient("Treatments", p.id)}
                 >
-                  <Activity size={14} /> Log Treatment
+                  <Activity size={13} /> Log Treatment
                 </button>
                 <button
                   type="button"
                   className="btn sm subtle"
                   onClick={() => navigateWithPatient("Prescriptions", p.id)}
                 >
-                  <FileText size={14} /> Write Prescription
+                  <FileText size={13} /> Write Prescription
                 </button>
                 <button
                   type="button"
                   className="btn sm subtle"
                   onClick={() => navigateWithPatient("Billing", p.id)}
                 >
-                  <CircleDollarSign size={14} /> Create Invoice
+                  <CircleDollarSign size={13} /> Create Invoice
                 </button>
                 <button
                   type="button"
                   className="btn sm subtle"
                   onClick={() => navigateWithPatient("Follow-ups", p.id)}
                 >
-                  <ClipboardList size={14} /> Add Follow-up
+                  <ClipboardList size={13} /> Add Follow-up
                 </button>
               </div>
 
               {patientModalTab === "overview" ? (
-                <div style={{ display: "grid", gap: 18 }}>
+                <div style={{ display: "grid", gap: 16 }}>
                   <div
                     style={{
                       display: "grid",
@@ -4415,6 +4768,206 @@ export default function ClinicApp() {
                     </div>
                   </div>
                 </div>
+              ) : patientModalTab === "clinical" ? (
+                <div className="grid-equal">
+                  <div
+                    style={{
+                      padding: 16,
+                      borderRadius: 16,
+                      border: "1px solid var(--line)",
+                    }}
+                  >
+                    <b style={{ fontSize: 14 }}>
+                      All Appointments ({p.appointments?.length || 0})
+                    </b>
+                    <div className="schedule" style={{ marginTop: 8 }}>
+                      {p.appointments?.length ? (
+                        p.appointments.map((a: any) => (
+                          <div
+                            key={a.id}
+                            style={{
+                              display: "flex",
+                              justifyContent: "space-between",
+                              padding: "10px 0",
+                              borderTop: "1px solid var(--line)",
+                              fontSize: 13,
+                            }}
+                          >
+                            <div>
+                              <b>{a.type}</b>
+                              <div className="sub" style={{ fontSize: 12 }}>
+                                {new Date(a.startsAt).toLocaleString("en-IN")}
+                                {a.complaint ? ` · ${a.complaint}` : ""}
+                              </div>
+                            </div>
+                            <span
+                              className={`status ${String(
+                                a.status
+                              ).toLowerCase()}`}
+                            >
+                              {a.status}
+                            </span>
+                          </div>
+                        ))
+                      ) : (
+                        <p className="sub" style={{ marginTop: 8 }}>
+                          No appointments recorded.
+                        </p>
+                      )}
+                    </div>
+                  </div>
+
+                  <div
+                    style={{
+                      padding: 16,
+                      borderRadius: 16,
+                      border: "1px solid var(--line)",
+                    }}
+                  >
+                    <b style={{ fontSize: 14 }}>
+                      All Treatments ({p.treatments?.length || 0})
+                    </b>
+                    <div className="schedule" style={{ marginTop: 8 }}>
+                      {p.treatments?.length ? (
+                        p.treatments.map((t: any) => (
+                          <div
+                            key={t.id}
+                            style={{
+                              display: "flex",
+                              justifyContent: "space-between",
+                              padding: "10px 0",
+                              borderTop: "1px solid var(--line)",
+                              fontSize: 13,
+                            }}
+                          >
+                            <div>
+                              <b>
+                                {t.procedure}{" "}
+                                {t.toothNumber ? `(#${t.toothNumber})` : ""}
+                              </b>
+                              <div className="sub" style={{ fontSize: 12 }}>
+                                {t.category} ·{" "}
+                                {new Date(t.date).toLocaleDateString("en-IN")}
+                              </div>
+                            </div>
+                            <b className="tabular">{money(t.costPaise)}</b>
+                          </div>
+                        ))
+                      ) : (
+                        <p className="sub" style={{ marginTop: 8 }}>
+                          No treatments recorded.
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              ) : patientModalTab === "billing" ? (
+                <div className="grid-equal">
+                  <div
+                    style={{
+                      padding: 16,
+                      borderRadius: 16,
+                      border: "1px solid var(--line)",
+                    }}
+                  >
+                    <b style={{ fontSize: 14 }}>
+                      Prescriptions ({p.prescriptions?.length || 0})
+                    </b>
+                    <div className="schedule" style={{ marginTop: 8 }}>
+                      {p.prescriptions?.length ? (
+                        p.prescriptions.map((rx: any) => (
+                          <div
+                            key={rx.id}
+                            style={{
+                              display: "flex",
+                              justifyContent: "space-between",
+                              alignItems: "center",
+                              padding: "10px 0",
+                              borderTop: "1px solid var(--line)",
+                              fontSize: 13,
+                            }}
+                          >
+                            <div>
+                              <b>
+                                {(rx.items || [])
+                                  .map((i: any) => i.medication)
+                                  .join(", ")}
+                              </b>
+                              <div className="sub" style={{ fontSize: 12 }}>
+                                {new Date(rx.date).toLocaleDateString("en-IN")}
+                              </div>
+                            </div>
+                            <button
+                              type="button"
+                              className="btn sm"
+                              onClick={() =>
+                                setPrintPrescription({ ...rx, patient: p })
+                              }
+                            >
+                              Print Rx
+                            </button>
+                          </div>
+                        ))
+                      ) : (
+                        <p className="sub" style={{ marginTop: 8 }}>
+                          No prescriptions issued.
+                        </p>
+                      )}
+                    </div>
+                  </div>
+
+                  <div
+                    style={{
+                      padding: 16,
+                      borderRadius: 16,
+                      border: "1px solid var(--line)",
+                    }}
+                  >
+                    <b style={{ fontSize: 14 }}>
+                      Invoices & Payments ({p.invoices?.length || 0})
+                    </b>
+                    <div className="schedule" style={{ marginTop: 8 }}>
+                      {p.invoices?.length ? (
+                        p.invoices.map((inv: any) => {
+                          const s = auditInvoiceRecord(inv);
+                          return (
+                            <div
+                              key={inv.id}
+                              style={{
+                                display: "flex",
+                                justifyContent: "space-between",
+                                alignItems: "center",
+                                padding: "10px 0",
+                                borderTop: "1px solid var(--line)",
+                                fontSize: 13,
+                              }}
+                            >
+                              <div className="tabular">
+                                <b>{inv.invoiceNumber}</b>
+                                <div className="sub" style={{ fontSize: 12 }}>
+                                  Total {money(s.totalPaise)} · Paid{" "}
+                                  {money(s.paidPaise)} · Balance{" "}
+                                  {money(s.outstandingPaise)}
+                                </div>
+                              </div>
+                              <span
+                                className={`status ${String(
+                                  s.status
+                                ).toLowerCase()}`}
+                              >
+                                {s.status}
+                              </span>
+                            </div>
+                          );
+                        })
+                      ) : (
+                        <p className="sub" style={{ marginTop: 8 }}>
+                          No invoices created.
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                </div>
               ) : (
                 <form onSubmit={savePatientEdit}>
                   <div className="form-grid">
@@ -4593,7 +5146,7 @@ export default function ClinicApp() {
         >
           <div className="card-header">
             <div>
-              <p className="eyebrow">DENTALCARE CLINIC · DR. KINJAL</p>
+              <p className="eyebrow">{APP_NAME.toUpperCase()}</p>
               <h2 style={{ fontSize: 22, marginTop: 4 }}>
                 Clinical Prescription (℞)
               </h2>
@@ -4625,7 +5178,8 @@ export default function ClinicApp() {
               ({rx.patient?.patientId})
             </div>
             <div className="sub" style={{ fontSize: 12.5, marginTop: 2 }}>
-              Date: {new Date(rx.date).toLocaleDateString("en-IN")}
+              Date: {new Date(rx.date).toLocaleDateString("en-IN")} · Prescriber:
+              Dr. Kinjal Maheshwari
             </div>
           </div>
 
@@ -4695,19 +5249,27 @@ export default function ClinicApp() {
             <span className="brand-mark">
               <Stethoscope size={17} />
             </span>
-            <span>DentalCare</span>
+            <div className="brand-copy">
+              <span className="brand-title">{APP_NAME}</span>
+              <span className="brand-subtitle">Clinical Practice Suite</span>
+            </div>
           </div>
 
           <nav className="nav" aria-label="Primary navigation">
-            {nav.map(([n, I]: any) => (
-              <button
-                className={page === n ? "active" : ""}
-                onClick={() => setPage(n)}
-                key={n}
-              >
-                <I size={18} />
-                <span>{n}</span>
-              </button>
+            {navGroups.map((group) => (
+              <div key={group.label} style={{ display: "grid", gap: 2 }}>
+                <div className="nav-section-label">{group.label}</div>
+                {group.items.map(([n, I]: any) => (
+                  <button
+                    className={page === n ? "active" : ""}
+                    onClick={() => setPage(n)}
+                    key={n}
+                  >
+                    <I size={17} />
+                    <span>{n}</span>
+                  </button>
+                ))}
+              </div>
             ))}
           </nav>
         </div>
@@ -4718,11 +5280,13 @@ export default function ClinicApp() {
               className="avatar"
               style={{ width: 32, height: 32, margin: 0, fontSize: 12 }}
             >
-              DK
+              KM
             </span>
             <div className="doctor-pill-meta" style={{ minWidth: 0, flex: 1 }}>
-              <b style={{ fontSize: 13, display: "block" }}>Dr. Kinjal</b>
-              <span className="sub" style={{ fontSize: 11.5 }}>
+              <b style={{ fontSize: 12.5, display: "block" }}>
+                Dr. Kinjal Maheshwari
+              </b>
+              <span className="sub" style={{ fontSize: 11 }}>
                 Local-First Edition
               </span>
             </div>

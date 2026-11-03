@@ -33,7 +33,9 @@ export default function Login() {
         return;
       }
       const payload = await r.json().catch(() => ({}));
-      setError(payload.error || "Unable to sign in. Please verify your credentials.");
+      setError(
+        payload.error || "Unable to sign in. Please verify your credentials."
+      );
     } catch {
       setError("Network error while connecting to the local clinic server.");
     } finally {
@@ -48,10 +50,17 @@ export default function Login() {
           <span className="brand-mark">
             <Stethoscope size={18} />
           </span>
-          <span>DentalCare</span>
+          <div className="brand-copy">
+            <span className="brand-title">
+              Doctor Kinjal Maheshwari&apos;s Patient Tracker
+            </span>
+            <span className="brand-subtitle">
+              Clinical Practice &amp; Patient Management Suite
+            </span>
+          </div>
         </div>
 
-        <div style={{ maxWidth: 460 }}>
+        <div style={{ maxWidth: 468 }}>
           <div
             style={{
               display: "inline-flex",
@@ -60,38 +69,39 @@ export default function Login() {
               padding: "6px 12px",
               borderRadius: 999,
               background: "rgba(255, 255, 255, 0.1)",
-              border: "1px solid rgba(255, 255, 255, 0.15)",
+              border: "1px solid rgba(255, 255, 255, 0.16)",
               color: "#a7d8ff",
               fontSize: 12,
               fontWeight: 600,
               marginBottom: 22,
             }}
           >
-            <Sparkles size={13} /> Clinical Practice Suite · Dr. Kinjal
+            <Sparkles size={13} /> Doctor Kinjal Maheshwari&apos;s Patient Tracker
           </div>
 
           <h1
             style={{
-              fontSize: "clamp(34px, 4vw, 52px)",
+              fontSize: "clamp(32px, 3.6vw, 48px)",
               fontWeight: 700,
-              letterSpacing: "-0.045em",
-              lineHeight: 1.06,
+              letterSpacing: "-0.042em",
+              lineHeight: 1.08,
               margin: "0 0 16px",
             }}
           >
-            Care, designed with clarity.
+            Precision care, designed with calm clarity.
           </h1>
           <p
             style={{
-              color: "rgba(226, 240, 255, 0.82)",
-              fontSize: 16,
+              color: "rgba(226, 240, 255, 0.84)",
+              fontSize: 15.5,
               lineHeight: 1.58,
-              margin: "0 0 32px",
+              margin: "0 0 30px",
             }}
           >
-            A quiet, local-first clinical environment crafted for patient
-            records, chairside treatments, prescriptions, and billing—with
-            resilient Google Sheets synchronization.
+            An Apple-inspired, local-first clinical workspace crafted for
+            comprehensive patient records, chairside treatments, prescriptions,
+            and integer-paise financial billing—with resilient Google Sheets
+            synchronization.
           </p>
 
           <div
@@ -105,9 +115,18 @@ export default function Login() {
             }}
           >
             {[
-              [Database, "Authoritative local SQLite database for zero-latency care"],
-              [CheckCircle2, "Idempotent Google Sheets reporting & backup queue"],
-              [Lock, "Signed HTTP-only session with brute-force & CSRF protection"],
+              [
+                Database,
+                "Authoritative local SQLite database for zero-latency clinical care",
+              ],
+              [
+                CheckCircle2,
+                "Idempotent Google Sheets reporting & real-time backup queue",
+              ],
+              [
+                Lock,
+                "Signed HTTP-only session with brute-force & CSRF protection",
+              ],
             ].map(([Icon, text]: any) => (
               <div
                 key={text}
@@ -136,25 +155,28 @@ export default function Login() {
             gap: 8,
           }}
         >
-          <span>Private Practice Edition · Local-First Architecture</span>
-          <span>Encrypted Session</span>
+          <span>Doctor Kinjal Maheshwari&apos;s Patient Tracker</span>
+          <span>Local-First Architecture · Encrypted Session</span>
         </small>
       </section>
 
       <section className="login-form">
         <div className="login-card">
-          <p className="eyebrow">DOCTOR ACCESS</p>
-          <h2 className="title" style={{ fontSize: 30, marginTop: 6 }}>
-            Welcome back
+          <p className="eyebrow">
+            DOCTOR KINJAL MAHESHWARI&apos;S PATIENT TRACKER
+          </p>
+          <h2 className="title" style={{ fontSize: 28, marginTop: 6 }}>
+            Welcome Doctor Kinjal Maheshwari
           </h2>
-          <p className="sub" style={{ marginBottom: 26 }}>
-            Sign in with your clinic credentials to unlock patient records.
+          <p className="sub" style={{ marginBottom: 24 }}>
+            Sign in with your clinic credentials to unlock patient records and
+            practice operations.
           </p>
 
           <form
             onSubmit={submit}
             className="form-grid"
-            style={{ gridTemplateColumns: "1fr", gap: 18 }}
+            style={{ gridTemplateColumns: "1fr", gap: 16 }}
           >
             <label className="field">
               Username
@@ -186,7 +208,7 @@ export default function Login() {
                     position: "absolute",
                     right: 4,
                     top: 4,
-                    minHeight: 32,
+                    minHeight: 30,
                     border: 0,
                     padding: "4px 8px",
                     background: "transparent",
@@ -202,9 +224,9 @@ export default function Login() {
               type="submit"
               className="btn primary"
               disabled={loading}
-              style={{ width: "100%", minHeight: 44, marginTop: 4 }}
+              style={{ width: "100%", minHeight: 42, marginTop: 4 }}
             >
-              {loading ? "Signing in…" : "Sign in securely"}
+              {loading ? "Signing in…" : "Sign in to Patient Tracker"}
             </button>
           </form>
 
@@ -220,15 +242,17 @@ export default function Login() {
               gap: 8,
               alignItems: "center",
               justifyContent: "center",
-              marginTop: 26,
-              paddingTop: 18,
+              marginTop: 24,
+              paddingTop: 16,
               borderTop: "1px solid var(--line)",
               color: "var(--muted)",
-              fontSize: 12.5,
+              fontSize: 12,
             }}
           >
             <ShieldCheck size={15} style={{ color: "var(--blue)" }} />
-            <span>Restricted to Dr. Kinjal · Authorized Clinical Device</span>
+            <span>
+              Restricted to Dr. Kinjal Maheshwari · Authorized Clinical Device
+            </span>
           </div>
         </div>
       </section>
