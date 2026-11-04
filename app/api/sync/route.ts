@@ -2,7 +2,11 @@ import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { isAuthenticated } from "@/lib/auth";
 import { handleApiError } from "@/lib/api";
-import { isSheetsConfigured, syncRecordToSheets } from "@/lib/sheets";
+import {
+  hydrateDatabaseFromSheets,
+  isSheetsConfigured,
+  syncRecordToSheets,
+} from "@/lib/sheets";
 import { loadSyncRecord } from "@/lib/sync-record";
 import { csrfFailure, sameOrigin } from "@/lib/security";
 
@@ -84,6 +88,23 @@ export async function POST(req: Request) {
     let synced = 0;
     let failedCount = 0;
     let lastError: string | null = null;
+
+    if (
+      jobs.length === 0 &&
+      process.env.VERCEL &&
+      isSheetsConfigured() &&
+      (await db.patient.count()) === 0
+    ) {
+      try {
+        const res = await hydrateDatabaseFromSheets(db);
+        synced += res.hydratedPatients;
+      } catch (e) {
+        lastError =
+          e instanceof Error && e.message
+            ? e.message.slice(0, 240)
+            : "Unable to hydrate from Google Sheets.";
+      }
+    }
 
     for (const job of jobs) {
       const claim = await db.syncQueue.updateMany({

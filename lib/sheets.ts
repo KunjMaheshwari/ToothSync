@@ -263,17 +263,32 @@ function stripQuotes(raw: string | undefined): string {
   return raw.trim().replace(/^["']|["']$/g, "");
 }
 
+export function normalizePemPrivateKey(raw: string | undefined): string {
+  const unquoted = stripQuotes(raw).replace(/\\n/g, "\n").replace(/\r/g, "");
+  if (!unquoted) return "";
+  const match = unquoted.match(
+    /-----BEGIN ([A-Z ]+)-----([\s\S]*?)-----END \1-----/
+  );
+  if (match) {
+    const keyType = match[1];
+    const base64Body = match[2].replace(/\s+/g, "");
+    const wrapped = base64Body.match(/.{1,64}/g) || [];
+    return `-----BEGIN ${keyType}-----\n${wrapped.join("\n")}\n-----END ${keyType}-----\n`;
+  }
+  return unquoted;
+}
+
 export function isSheetsConfigured(): boolean {
   return Boolean(
     stripQuotes(process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL) &&
-      stripQuotes(process.env.GOOGLE_PRIVATE_KEY) &&
+      normalizePemPrivateKey(process.env.GOOGLE_PRIVATE_KEY) &&
       stripQuotes(process.env.GOOGLE_SHEET_ID)
   );
 }
 
 export function configured() {
   const email = stripQuotes(process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL);
-  const key = stripQuotes(process.env.GOOGLE_PRIVATE_KEY).replace(/\\n/g, "\n");
+  const key = normalizePemPrivateKey(process.env.GOOGLE_PRIVATE_KEY);
   const sheetId = stripQuotes(process.env.GOOGLE_SHEET_ID);
   if (!email || !key || !sheetId) {
     throw new Error("Google Sheets credentials are not configured.");
