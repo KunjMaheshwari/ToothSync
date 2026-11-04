@@ -94,3 +94,4 @@ it("hydrateDatabaseFromSheets preserves deletedAt and never resurrects archived 
 - **TypeScript Compilation (`npx tsc --noEmit`):** Exit code `0` (0 errors).
 - **ESLint Code Quality (`npm run lint`):** Exit code `0` (clean).
 - **Production Build (`npm run build`):** Exit code `0` (Prisma Client generated, 14 static pages generated, optimized production build finalized).
+

@@ -141,3 +141,4 @@ Prior to the fix, deleting a patient simply executed `await db.patient.update({ 
    - `npx tsc --noEmit` exited 0.
    - `npm run lint` exited 0.
    - `npm run build` exited 0.
+

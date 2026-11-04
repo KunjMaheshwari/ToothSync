@@ -86,3 +86,4 @@ When reconciling local database rows with Google Sheets:
 2. **Live Google Sheets API Note:**
    - In automated CI and isolated local test environments without production service account credentials, tests execute against the strict Google Sheets v4 API simulator.
    - On the live production deployment where `GOOGLE_SHEETS_SPREADSHEET_ID` and `GOOGLE_SERVICE_ACCOUNT_EMAIL` / `GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY` are provided, the runtime uses the authenticated Google Sheets API client with write-through sync via `syncAfterWriteOnServerless()`.
+
