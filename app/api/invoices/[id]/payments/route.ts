@@ -1,6 +1,11 @@
 import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
-import { logAudit, protectedWrite, queueRecord } from "@/lib/api";
+import {
+  logAudit,
+  protectedWrite,
+  queueRecord,
+  syncAfterWriteOnServerless,
+} from "@/lib/api";
 import { readJson } from "@/lib/security";
 import { paymentSchema } from "@/lib/validation";
 import { deriveInvoiceStatus } from "@/lib/finance";
@@ -58,7 +63,6 @@ export async function POST(
 
   try {
     const outcome = await withInvoiceLock(id, async () => {
-      // 1. Check explicit idempotency key registry
       if (idempotencyKey) {
         const existingPaymentId = idempotencyRegistry.get(
           `${id}:${idempotencyKey}`
@@ -81,12 +85,15 @@ export async function POST(
         if (!invoice) throw new Error("NOT_FOUND");
         if (invoice.status === "CANCELLED") throw new Error("CANCELLED");
 
-        // Check duplicate transaction reference on the same invoice if provided
         if (d.reference) {
           const dupRef = await tx.payment.findFirst({
             where: { invoiceId: id, reference: d.reference },
           });
-          if (dupRef && dupRef.amountPaise === d.amountPaise && dupRef.method === d.method) {
+          if (
+            dupRef &&
+            dupRef.amountPaise === d.amountPaise &&
+            dupRef.method === d.method
+          ) {
             return { record: dupRef, isDuplicateRef: true };
           }
           if (dupRef) {
@@ -94,14 +101,12 @@ export async function POST(
           }
         }
 
-        // Authoritative calculation of paidPaise from recorded Payment rows
         const agg = await tx.payment.aggregate({
           where: { invoiceId: id },
           _sum: { amountPaise: true },
         });
         const authoritativePaidPaise = agg._sum.amountPaise ?? 0;
 
-        // Verify invoice totalPaise against line items if items exist
         const subtotalPaise = invoice.items.reduce(
           (sum, it) => sum + it.quantity * it.unitPaise,
           0
@@ -122,7 +127,6 @@ export async function POST(
           invoice.status
         );
 
-        // Optimistic concurrency check on the invoice row
         const updatedInvoice = await tx.invoice.updateMany({
           where: {
             id,
@@ -165,6 +169,11 @@ export async function POST(
         idempotent: payment.isDuplicateRef,
       };
     });
+
+    if (!outcome.idempotent) {
+      await syncAfterWriteOnServerless("Invoice", id);
+      await syncAfterWriteOnServerless("Payment", outcome.payment.id);
+    }
 
     return NextResponse.json(outcome.payment, {
       status: outcome.idempotent ? 200 : 201,

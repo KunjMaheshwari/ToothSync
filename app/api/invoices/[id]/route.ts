@@ -1,6 +1,13 @@
 import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
-import { logAudit, protectedRead, protectedWrite, queueRecord } from "@/lib/api";
+import {
+  handleApiError,
+  logAudit,
+  protectedRead,
+  protectedWrite,
+  queueRecord,
+  syncAfterWriteOnServerless,
+} from "@/lib/api";
 import { readJson } from "@/lib/security";
 import { invoiceUpdateSchema } from "@/lib/validation";
 import {
@@ -17,23 +24,30 @@ export async function GET(
   if (denied) return denied;
   const { id } = await params;
 
-  const invoice = await db.invoice.findUnique({
-    where: { id },
-    include: {
-      patient: true,
-      items: true,
-      payments: { orderBy: { paidAt: "desc" } },
-    },
-  });
+  try {
+    const invoice = await db.invoice.findUnique({
+      where: { id },
+      include: {
+        patient: true,
+        items: true,
+        payments: { orderBy: { paidAt: "desc" } },
+      },
+    });
 
-  if (!invoice) {
-    return NextResponse.json({ error: "Invoice not found." }, { status: 404 });
+    if (!invoice) {
+      return NextResponse.json(
+        { error: "Invoice not found." },
+        { status: 404 }
+      );
+    }
+
+    return NextResponse.json({
+      ...invoice,
+      financialSummary: auditInvoiceRecord(invoice),
+    });
+  } catch (error) {
+    return handleApiError(error, "Unable to load invoice.");
   }
-
-  return NextResponse.json({
-    ...invoice,
-    financialSummary: auditInvoiceRecord(invoice),
-  });
 }
 
 export async function PATCH(
@@ -160,11 +174,15 @@ export async function PATCH(
       return invoice;
     });
 
+    await syncAfterWriteOnServerless("Invoice", updated.id);
     return NextResponse.json(updated);
   } catch (err) {
     const code = err instanceof Error ? err.message : "";
     if (code === "NOT_FOUND") {
-      return NextResponse.json({ error: "Invoice not found." }, { status: 404 });
+      return NextResponse.json(
+        { error: "Invoice not found." },
+        { status: 404 }
+      );
     }
     if (code === "HAS_PAYMENTS") {
       return NextResponse.json(

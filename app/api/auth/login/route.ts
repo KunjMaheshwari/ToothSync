@@ -13,6 +13,18 @@ import {
 const initialPasswordHash =
   "$2b$12$lGtjiRHlOzC5z1eeUYlJBeOjza2V2bRd9hbNL9mrblE9QtLqDP4F2";
 
+function resolvePasswordHash(): string {
+  const raw = process.env.AUTH_PASSWORD_HASH;
+  if (!raw) return initialPasswordHash;
+  const cleaned = raw
+    .trim()
+    .replace(/^["']|["']$/g, "")
+    .replace(/\\\$/g, "$");
+  return /^\$2[aby]\$\d{2}\$[./A-Za-z0-9]{53}$/.test(cleaned)
+    ? cleaned
+    : initialPasswordHash;
+}
+
 export async function POST(req: Request) {
   if (!sameOrigin(req)) {
     return NextResponse.json(
@@ -33,12 +45,14 @@ export async function POST(req: Request) {
     typeof body === "object" && body ? Reflect.get(body, "username") : undefined;
   const password =
     typeof body === "object" && body ? Reflect.get(body, "password") : undefined;
-  const expected = process.env.AUTH_USERNAME || "doctorkinjal";
-  const hash = process.env.AUTH_PASSWORD_HASH || initialPasswordHash;
+  const expected = (process.env.AUTH_USERNAME || "doctorkinjal")
+    .trim()
+    .replace(/^["']|["']$/g, "");
+  const hash = resolvePasswordHash();
   const valid =
     typeof username === "string" &&
     typeof password === "string" &&
-    username === expected &&
+    username.trim() === expected &&
     (await bcrypt.compare(password, hash));
 
   if (!valid) {

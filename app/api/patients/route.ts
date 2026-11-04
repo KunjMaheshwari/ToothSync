@@ -3,6 +3,7 @@ import { randomInt } from "crypto";
 import { Prisma } from "@prisma/client";
 import { db } from "@/lib/db";
 import { isAuthenticated } from "@/lib/auth";
+import { handleApiError, syncAfterWriteOnServerless } from "@/lib/api";
 import { patientSchema } from "@/lib/validation";
 import { patientSearchWhere } from "@/lib/patient-search";
 import { csrfFailure, readJson, sameOrigin } from "@/lib/security";
@@ -20,22 +21,31 @@ export async function GET(req: Request) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
   const q = new URL(req.url).searchParams.get("q") || "";
-  const patients = await db.patient.findMany({
-    where: patientSearchWhere(q),
-    include: {
-      _count: {
-        select: {
-          appointments: true,
-          treatments: true,
-          invoices: true,
-          followUps: true,
+  try {
+    const patients = await db.patient.findMany({
+      where: patientSearchWhere(q),
+      include: {
+        _count: {
+          select: {
+            appointments: true,
+            treatments: true,
+            invoices: true,
+            followUps: true,
+          },
         },
       },
-    },
-    orderBy: { registeredAt: "desc" },
-    take: 50,
-  });
-  return NextResponse.json(patients, { headers: { "Cache-Control": "no-store" } });
+      orderBy: { registeredAt: "desc" },
+      take: 50,
+    });
+    return NextResponse.json(patients, {
+      headers: { "Cache-Control": "no-store" },
+    });
+  } catch (error) {
+    return handleApiError(
+      error,
+      "Unable to load patient records at the moment. Please retry."
+    );
+  }
 }
 
 export async function POST(req: Request) {
@@ -60,58 +70,89 @@ export async function POST(req: Request) {
     ...(d.email ? [{ email: d.email }] : []),
     ...(d.referenceId ? [{ referenceId: d.referenceId }] : []),
   ];
-  const dup = await db.patient.findFirst({
-    where: { deletedAt: null, OR: identifiers },
-  });
-  if (dup) {
-    return NextResponse.json(
-      {
-        error: `Possible duplicate found (${dup.firstName} ${dup.lastName} · ${dup.patientId}).`,
-        patient: { patientId: dup.patientId, id: dup.id },
-      },
-      { status: 409 }
-    );
-  }
 
-  for (let attempt = 0; attempt < 3; attempt++) {
-    try {
-      const p = await db.$transaction(async (tx) => {
-        const patient = await tx.patient.create({
-          data: {
-            ...d,
-            referenceId: d.referenceId || null,
-            email: d.email || null,
-            dateOfBirth: d.dateOfBirth ? new Date(d.dateOfBirth) : null,
-            patientId: makeId(),
-          },
+  try {
+    const dup = await db.patient.findFirst({
+      where: { deletedAt: null, OR: identifiers },
+    });
+    if (dup) {
+      return NextResponse.json(
+        {
+          error: `Possible duplicate found (${dup.firstName} ${dup.lastName} · ${dup.patientId}).`,
+          patient: { patientId: dup.patientId, id: dup.id },
+        },
+        { status: 409 }
+      );
+    }
+
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        const p = await db.$transaction(async (tx) => {
+          const patient = await tx.patient.create({
+            data: {
+              ...d,
+              referenceId: d.referenceId || null,
+              email: d.email || null,
+              dateOfBirth: d.dateOfBirth ? new Date(d.dateOfBirth) : null,
+              patientId: makeId(),
+            },
+          });
+          await tx.syncQueue.create({
+            data: {
+              patientId: patient.id,
+              entity: "Patient",
+              entityId: patient.id,
+              operation: "UPSERT",
+              payload: JSON.stringify({ patientId: patient.patientId }),
+            },
+          });
+          await tx.auditLog.create({
+            data: {
+              action: "CREATE",
+              entity: "Patient",
+              entityId: patient.id,
+            },
+          });
+          return patient;
         });
-        await tx.syncQueue.create({
-          data: {
-            patientId: patient.id,
-            entity: "Patient",
-            entityId: patient.id,
-            operation: "UPSERT",
-            payload: JSON.stringify({ patientId: patient.patientId }),
-          },
-        });
-        await tx.auditLog.create({
-          data: { action: "CREATE", entity: "Patient", entityId: patient.id },
-        });
-        return patient;
-      });
-      return NextResponse.json(p, { status: 201 });
-    } catch (error) {
-      if (
-        !(error instanceof Prisma.PrismaClientKnownRequestError) ||
-        error.code !== "P2002"
-      ) {
+
+        await syncAfterWriteOnServerless("Patient", p.id);
+        return NextResponse.json(p, { status: 201 });
+      } catch (error) {
+        if (
+          error instanceof Prisma.PrismaClientKnownRequestError &&
+          error.code === "P2002"
+        ) {
+          const target = Array.isArray(error.meta?.target)
+            ? error.meta.target.join(",")
+            : String(error.meta?.target || "");
+          if (
+            target.includes("phone") ||
+            target.includes("email") ||
+            target.includes("referenceId")
+          ) {
+            return NextResponse.json(
+              {
+                error:
+                  "A patient record with this phone number, email, or reference ID already exists.",
+              },
+              { status: 409 }
+            );
+          }
+          continue;
+        }
         throw error;
       }
     }
-  }
 
-  return NextResponse.json(
-    { error: "Unable to allocate a unique patient ID. Please retry." },
-    { status: 503 }
-  );
+    return NextResponse.json(
+      { error: "Unable to allocate a unique patient ID. Please retry." },
+      { status: 503 }
+    );
+  } catch (error) {
+    return handleApiError(
+      error,
+      "Unable to save patient record due to a database error. Please retry."
+    );
+  }
 }

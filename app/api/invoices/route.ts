@@ -1,6 +1,13 @@
 import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
-import { logAudit, protectedRead, protectedWrite, queueRecord } from "@/lib/api";
+import {
+  handleApiError,
+  logAudit,
+  protectedRead,
+  protectedWrite,
+  queueRecord,
+  syncAfterWriteOnServerless,
+} from "@/lib/api";
 import { readJson } from "@/lib/security";
 import { invoiceSchema } from "@/lib/validation";
 import { calculateInvoiceTotals } from "@/lib/finance";
@@ -14,21 +21,25 @@ export async function GET(req: Request) {
   const denied = await protectedRead();
   if (denied) return denied;
   const patientId = new URL(req.url).searchParams.get("patientId");
-  return NextResponse.json(
-    await db.invoice.findMany({
-      where: {
-        patient: { deletedAt: null },
-        ...(patientId ? { patientId } : {}),
-      },
-      include: {
-        patient: true,
-        items: true,
-        payments: { orderBy: { paidAt: "desc" } },
-      },
-      orderBy: { date: "desc" },
-      take: 100,
-    })
-  );
+  try {
+    return NextResponse.json(
+      await db.invoice.findMany({
+        where: {
+          patient: { deletedAt: null },
+          ...(patientId ? { patientId } : {}),
+        },
+        include: {
+          patient: true,
+          items: true,
+          payments: { orderBy: { paidAt: "desc" } },
+        },
+        orderBy: { date: "desc" },
+        take: 100,
+      })
+    );
+  } catch (error) {
+    return handleApiError(error, "Unable to load invoices.");
+  }
 }
 
 export async function POST(req: Request) {
@@ -45,12 +56,6 @@ export async function POST(req: Request) {
   }
 
   const d = parsed.data;
-  if (
-    !(await db.patient.findFirst({ where: { id: d.patientId, deletedAt: null } }))
-  ) {
-    return NextResponse.json({ error: "Patient not found." }, { status: 404 });
-  }
-
   let totals;
   try {
     totals = calculateInvoiceTotals(d);
@@ -61,49 +66,66 @@ export async function POST(req: Request) {
     );
   }
 
-  for (let tries = 0; tries < 3; tries++) {
-    try {
-      const record = await db.$transaction(async (tx) => {
-        const invoice = await tx.invoice.create({
-          data: {
-            patientId: d.patientId,
-            invoiceNumber: number(),
-            discountPaise: totals.discountPaise,
-            taxPaise: totals.taxPaise,
-            totalPaise: totals.totalPaise,
-            paidPaise: 0,
-            status: totals.initialStatus,
-            items: {
-              create: d.items.map((item) => ({
-                description: item.description,
-                quantity: item.quantity,
-                unitPaise: item.unitPaise,
-              })),
+  try {
+    if (
+      !(await db.patient.findFirst({
+        where: { id: d.patientId, deletedAt: null },
+      }))
+    ) {
+      return NextResponse.json(
+        { error: "Patient not found." },
+        { status: 404 }
+      );
+    }
+
+    for (let tries = 0; tries < 3; tries++) {
+      try {
+        const record = await db.$transaction(async (tx) => {
+          const invoice = await tx.invoice.create({
+            data: {
+              patientId: d.patientId,
+              invoiceNumber: number(),
+              discountPaise: totals.discountPaise,
+              taxPaise: totals.taxPaise,
+              totalPaise: totals.totalPaise,
+              paidPaise: 0,
+              status: totals.initialStatus,
+              items: {
+                create: d.items.map((item) => ({
+                  description: item.description,
+                  quantity: item.quantity,
+                  unitPaise: item.unitPaise,
+                })),
+              },
             },
-          },
-          include: {
-            patient: true,
-            items: true,
-            payments: true,
-          },
+            include: {
+              patient: true,
+              items: true,
+              payments: true,
+            },
+          });
+          await queueRecord(tx, "Invoice", invoice.id, invoice.patientId);
+          await logAudit(tx, "CREATE", "Invoice", invoice.id);
+          return invoice;
         });
-        await queueRecord(tx, "Invoice", invoice.id, invoice.patientId);
-        await logAudit(tx, "CREATE", "Invoice", invoice.id);
-        return invoice;
-      });
-      return NextResponse.json(record, { status: 201 });
-    } catch {
-      if (tries === 2) {
-        return NextResponse.json(
-          { error: "Unable to create invoice. Please retry." },
-          { status: 503 }
-        );
+
+        await syncAfterWriteOnServerless("Invoice", record.id);
+        return NextResponse.json(record, { status: 201 });
+      } catch {
+        if (tries === 2) {
+          return NextResponse.json(
+            { error: "Unable to create invoice. Please retry." },
+            { status: 503 }
+          );
+        }
       }
     }
-  }
 
-  return NextResponse.json(
-    { error: "Unable to create invoice. Please retry." },
-    { status: 503 }
-  );
+    return NextResponse.json(
+      { error: "Unable to create invoice. Please retry." },
+      { status: 503 }
+    );
+  } catch (error) {
+    return handleApiError(error, "Unable to create invoice. Please retry.");
+  }
 }

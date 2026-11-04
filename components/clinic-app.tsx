@@ -1225,11 +1225,16 @@ export default function ClinicApp() {
           await Promise.all([loadPatients(), refreshDashboard()]);
           setPage("Patients");
         } else {
-          setFormError(payload.error || "Unable to register patient.");
+          const fallbackMessage =
+            r.status >= 500
+              ? "Server error while saving patient record. Please retry."
+              : "Please check required fields.";
+          const errorMessage = payload.error || fallbackMessage;
+          setFormError(errorMessage);
           if (r.status === 409 && payload.patient?.id) {
             setDuplicateId(payload.patient.id);
           }
-          pushToast(payload.error || "Please check required fields.", "error");
+          pushToast(errorMessage, "error");
         }
       } catch {
         setFormError("Network error while saving patient.");

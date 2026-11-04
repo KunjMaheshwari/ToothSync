@@ -258,10 +258,23 @@ export function buildSheetRecord(entity: string, value: any): SheetRecord {
   }
 }
 
+function stripQuotes(raw: string | undefined): string {
+  if (!raw) return "";
+  return raw.trim().replace(/^["']|["']$/g, "");
+}
+
+export function isSheetsConfigured(): boolean {
+  return Boolean(
+    stripQuotes(process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL) &&
+      stripQuotes(process.env.GOOGLE_PRIVATE_KEY) &&
+      stripQuotes(process.env.GOOGLE_SHEET_ID)
+  );
+}
+
 export function configured() {
-  const email = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
-  const key = process.env.GOOGLE_PRIVATE_KEY?.replace(/\\n/g, "\n");
-  const sheetId = process.env.GOOGLE_SHEET_ID;
+  const email = stripQuotes(process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL);
+  const key = stripQuotes(process.env.GOOGLE_PRIVATE_KEY).replace(/\\n/g, "\n");
+  const sheetId = stripQuotes(process.env.GOOGLE_SHEET_ID);
   if (!email || !key || !sheetId) {
     throw new Error("Google Sheets credentials are not configured.");
   }
@@ -503,4 +516,359 @@ export function reconcileEntitySheet(
       mismatches.length === 0 &&
       (financialSummary ? financialSummary.balancesMatch : true),
   };
+}
+
+function parseDateOrNull(val: unknown): Date | null {
+  if (!val) return null;
+  const d = new Date(String(val));
+  return Number.isNaN(d.getTime()) ? null : d;
+}
+
+function parseDateOrNow(val: unknown): Date {
+  return parseDateOrNull(val) ?? new Date();
+}
+
+function strOrNull(val: unknown): string | null {
+  if (val === undefined || val === null) return null;
+  const trimmed = String(val).trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+/**
+ * Hydrates an empty SQLite database from the authoritative Google Sheets tabs on
+ * serverless cold starts so existing clinical and financial records remain available.
+ */
+export async function hydrateDatabaseFromSheets(
+  prisma: any,
+  customClient?: {
+    sheets: Pick<sheets_v4.Sheets, "spreadsheets">;
+    sheetId: string;
+  }
+): Promise<{ hydratedPatients: number }> {
+  const { sheets, sheetId } = customClient ?? configured();
+  const meta = await sheets.spreadsheets.get({
+    spreadsheetId: sheetId,
+    fields: "sheets.properties",
+  });
+  const existingTabs = new Set(
+    meta.data.sheets?.map((s) => s.properties?.title).filter(Boolean)
+  );
+
+  async function readTabRows(tab: string): Promise<(string | number)[][]> {
+    if (!existingTabs.has(tab)) return [];
+    const res = await sheets.spreadsheets.values.get({
+      spreadsheetId: sheetId,
+      range: `'${tab}'!A:Z`,
+    });
+    const rows = (res.data.values ?? []) as (string | number)[][];
+    return rows.slice(1).filter((r) => r && String(r[0] ?? "").trim().length > 0);
+  }
+
+  const [
+    patientRows,
+    appointmentRows,
+    treatmentRows,
+    prescriptionRows,
+    invoiceRows,
+    paymentRows,
+    followUpRows,
+  ] = await Promise.all([
+    readTabRows("Patients"),
+    readTabRows("Appointments"),
+    readTabRows("Treatments"),
+    readTabRows("Prescriptions"),
+    readTabRows("Invoices"),
+    readTabRows("Payments"),
+    readTabRows("Follow-ups"),
+  ]);
+
+  const patientIds = new Set<string>();
+  const invoiceIds = new Set<string>();
+  const now = new Date();
+
+  async function markSynced(
+    entity: string,
+    entityId: string,
+    patientId: string | null
+  ) {
+    await prisma.syncQueue
+      .upsert({
+        where: {
+          entity_entityId_operation: {
+            entity,
+            entityId,
+            operation: "UPSERT",
+          },
+        },
+        create: {
+          patientId,
+          entity,
+          entityId,
+          operation: "UPSERT",
+          payload: JSON.stringify({ entityId }),
+          status: "SYNCED",
+          attempts: 1,
+          nextAttemptAt: now,
+        },
+        update: {
+          status: "SYNCED",
+          lastError: null,
+        },
+      })
+      .catch(() => {});
+
+    await prisma.syncMetadata
+      .upsert({
+        where: { entity_entityId: { entity, entityId } },
+        create: { entity, entityId, syncedAt: now },
+        update: { syncedAt: now },
+      })
+      .catch(() => {});
+  }
+
+  for (const r of patientRows) {
+    const id = String(r[0]).trim();
+    const patientId = String(r[1] || "").trim() || `DNT-2026-${id.slice(-8)}`;
+    const referenceId = strOrNull(r[2]);
+    const firstName = String(r[3] || "Patient").trim();
+    const lastName = String(r[4] || "").trim();
+    const dateOfBirth = parseDateOrNull(r[5]);
+    const gender = strOrNull(r[6]);
+    const phone = String(r[7] || "").trim();
+    const email = strOrNull(r[8]);
+    const city = strOrNull(r[9]);
+    const allergies = strOrNull(r[10]);
+    const conditions = strOrNull(r[11]);
+    const dentalHistory = strOrNull(r[12]);
+    const consented = String(r[13]).toLowerCase() === "true";
+    const registeredAt = parseDateOrNow(r[14]);
+    const updatedAt = parseDateOrNow(r[15]);
+
+    if (!id || !phone) continue;
+    try {
+      await prisma.patient.upsert({
+        where: { id },
+        create: {
+          id,
+          patientId,
+          referenceId,
+          firstName,
+          lastName,
+          dateOfBirth,
+          gender,
+          phone,
+          email,
+          city,
+          allergies,
+          conditions,
+          dentalHistory,
+          consented,
+          registeredAt,
+          updatedAt,
+        },
+        update: {
+          patientId,
+          referenceId,
+          firstName,
+          lastName,
+          dateOfBirth,
+          gender,
+          phone,
+          email,
+          city,
+          allergies,
+          conditions,
+          dentalHistory,
+          consented,
+          updatedAt,
+        },
+      });
+      patientIds.add(id);
+      await markSynced("Patient", id, id);
+    } catch {
+      // Skip conflicting row without aborting hydration
+    }
+  }
+
+  for (const r of appointmentRows) {
+    const id = String(r[0]).trim();
+    const patientId = String(r[1] || "").trim();
+    if (!id || !patientIds.has(patientId)) continue;
+    const startsAt = parseDateOrNow(r[3]);
+    const endsAt =
+      parseDateOrNull(r[4]) ?? new Date(startsAt.getTime() + 30 * 60_000);
+    const type = String(r[5] || "General Consultation").trim();
+    const status = String(r[6] || "SCHEDULED").trim();
+    try {
+      await prisma.appointment.upsert({
+        where: { id },
+        create: { id, patientId, startsAt, endsAt, type, status },
+        update: { startsAt, endsAt, type, status },
+      });
+      await markSynced("Appointment", id, patientId);
+    } catch {}
+  }
+
+  for (const r of treatmentRows) {
+    const id = String(r[0]).trim();
+    const patientId = String(r[1] || "").trim();
+    if (!id || !patientIds.has(patientId)) continue;
+    const date = parseDateOrNow(r[3]);
+    const category = String(r[4] || "General").trim();
+    const procedure = String(r[5] || "Procedure").trim();
+    const toothNumber = strOrNull(r[6]);
+    const costPaise = Math.max(0, Number(r[7] || 0));
+    const status = String(r[8] || "PLANNED").trim();
+    try {
+      await prisma.treatment.upsert({
+        where: { id },
+        create: {
+          id,
+          patientId,
+          date,
+          category,
+          procedure,
+          toothNumber,
+          costPaise,
+          status,
+        },
+        update: {
+          date,
+          category,
+          procedure,
+          toothNumber,
+          costPaise,
+          status,
+        },
+      });
+      await markSynced("Treatment", id, patientId);
+    } catch {}
+  }
+
+  for (const r of prescriptionRows) {
+    const id = String(r[0]).trim();
+    const patientId = String(r[1] || "").trim();
+    if (!id || !patientIds.has(patientId)) continue;
+    const date = parseDateOrNow(r[3]);
+    const itemsStr = String(r[4] || "").trim();
+    const notes = strOrNull(r[5]);
+    const parsedItems = itemsStr
+      ? itemsStr
+          .split(";")
+          .map((part) => part.trim())
+          .filter(Boolean)
+          .map((part) => {
+            const [medication = "Medication", dosage = "", frequency = "", duration = ""] =
+              part.split("|").map((s) => s.trim());
+            return {
+              medication,
+              dosage: dosage || "As directed",
+              frequency: frequency || "Daily",
+              duration: duration || "5 days",
+            };
+          })
+      : [];
+    try {
+      const existing = await prisma.prescription.findUnique({ where: { id } });
+      if (!existing) {
+        await prisma.prescription.create({
+          data: {
+            id,
+            patientId,
+            date,
+            notes,
+            ...(parsedItems.length > 0 ? { items: { create: parsedItems } } : {}),
+          },
+        });
+      }
+      await markSynced("Prescription", id, patientId);
+    } catch {}
+  }
+
+  for (const r of invoiceRows) {
+    const id = String(r[0]).trim();
+    const patientId = String(r[1] || "").trim();
+    if (!id || !patientIds.has(patientId)) continue;
+    const invoiceNumber =
+      String(r[3] || "").trim() || `INV-2026-${id.slice(-8)}`;
+    const date = parseDateOrNow(r[4]);
+    const totalPaise = Math.max(0, Number(r[5] || 0));
+    const paidPaise = Math.max(0, Number(r[6] || 0));
+    const status = String(r[7] || "PENDING").trim();
+    try {
+      const existing = await prisma.invoice.findUnique({
+        where: { id },
+        include: { items: true },
+      });
+      if (!existing) {
+        await prisma.invoice.create({
+          data: {
+            id,
+            patientId,
+            invoiceNumber,
+            date,
+            totalPaise,
+            paidPaise,
+            status,
+            ...(totalPaise > 0
+              ? {
+                  items: {
+                    create: [
+                      {
+                        description: "Dental Clinical Services",
+                        quantity: 1,
+                        unitPaise: totalPaise,
+                      },
+                    ],
+                  },
+                }
+              : {}),
+          },
+        });
+      } else {
+        await prisma.invoice.update({
+          where: { id },
+          data: { totalPaise, paidPaise, status },
+        });
+      }
+      invoiceIds.add(id);
+      await markSynced("Invoice", id, patientId);
+    } catch {}
+  }
+
+  for (const r of paymentRows) {
+    const id = String(r[0]).trim();
+    const invoiceId = String(r[1] || "").trim();
+    if (!id || !invoiceIds.has(invoiceId)) continue;
+    const amountPaise = Math.max(0, Number(r[2] || 0));
+    const method = String(r[3] || "CASH").trim();
+    const paidAt = parseDateOrNow(r[4]);
+    try {
+      await prisma.payment.upsert({
+        where: { id },
+        create: { id, invoiceId, amountPaise, method, paidAt },
+        update: { amountPaise, method, paidAt },
+      });
+      await markSynced("Payment", id, null);
+    } catch {}
+  }
+
+  for (const r of followUpRows) {
+    const id = String(r[0]).trim();
+    const patientId = String(r[1] || "").trim();
+    if (!id || !patientIds.has(patientId)) continue;
+    const dueDate = parseDateOrNow(r[3]);
+    const reason = String(r[4] || "Clinical follow-up").trim();
+    const status = String(r[5] || "PENDING").trim();
+    try {
+      await prisma.followUp.upsert({
+        where: { id },
+        create: { id, patientId, dueDate, reason, status },
+        update: { dueDate, reason, status },
+      });
+      await markSynced("FollowUp", id, patientId);
+    } catch {}
+  }
+
+  return { hydratedPatients: patientIds.size };
 }

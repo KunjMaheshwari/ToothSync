@@ -1,6 +1,13 @@
 import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
-import { logAudit, protectedRead, protectedWrite, queueRecord } from "@/lib/api";
+import {
+  handleApiError,
+  logAudit,
+  protectedRead,
+  protectedWrite,
+  queueRecord,
+  syncAfterWriteOnServerless,
+} from "@/lib/api";
 import { readJson } from "@/lib/security";
 import { followUpSchema } from "@/lib/validation";
 
@@ -8,17 +15,21 @@ export async function GET(req: Request) {
   const denied = await protectedRead();
   if (denied) return denied;
   const patientId = new URL(req.url).searchParams.get("patientId");
-  return NextResponse.json(
-    await db.followUp.findMany({
-      where: {
-        patient: { deletedAt: null },
-        ...(patientId ? { patientId } : {}),
-      },
-      include: { patient: true },
-      orderBy: { dueDate: "asc" },
-      take: 100,
-    })
-  );
+  try {
+    return NextResponse.json(
+      await db.followUp.findMany({
+        where: {
+          patient: { deletedAt: null },
+          ...(patientId ? { patientId } : {}),
+        },
+        include: { patient: true },
+        orderBy: { dueDate: "asc" },
+        take: 100,
+      })
+    );
+  } catch (error) {
+    return handleApiError(error, "Unable to load follow-ups.");
+  }
 }
 
 export async function POST(req: Request) {
@@ -35,23 +46,35 @@ export async function POST(req: Request) {
   }
 
   const d = parsed.data;
-  if (!(await db.patient.findFirst({ where: { id: d.patientId, deletedAt: null } }))) {
-    return NextResponse.json({ error: "Patient not found." }, { status: 404 });
-  }
+  try {
+    if (
+      !(await db.patient.findFirst({
+        where: { id: d.patientId, deletedAt: null },
+      }))
+    ) {
+      return NextResponse.json(
+        { error: "Patient not found." },
+        { status: 404 }
+      );
+    }
 
-  const record = await db.$transaction(async (tx) => {
-    const followUp = await tx.followUp.create({
-      data: {
-        ...d,
-        notes: d.notes || null,
-        dueDate: new Date(d.dueDate),
-      },
-      include: { patient: true },
+    const record = await db.$transaction(async (tx) => {
+      const followUp = await tx.followUp.create({
+        data: {
+          ...d,
+          notes: d.notes || null,
+          dueDate: new Date(d.dueDate),
+        },
+        include: { patient: true },
+      });
+      await queueRecord(tx, "FollowUp", followUp.id, followUp.patientId);
+      await logAudit(tx, "CREATE", "FollowUp", followUp.id);
+      return followUp;
     });
-    await queueRecord(tx, "FollowUp", followUp.id, followUp.patientId);
-    await logAudit(tx, "CREATE", "FollowUp", followUp.id);
-    return followUp;
-  });
 
-  return NextResponse.json(record, { status: 201 });
+    await syncAfterWriteOnServerless("FollowUp", record.id);
+    return NextResponse.json(record, { status: 201 });
+  } catch (error) {
+    return handleApiError(error, "Unable to save follow-up.");
+  }
 }

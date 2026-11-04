@@ -2,4 +2,5 @@ node_modules/
 .next/
 .env
 prisma/*.db
-prisma/*.db-journal
+prisma/*.db-*
+prisma/*.db.*
