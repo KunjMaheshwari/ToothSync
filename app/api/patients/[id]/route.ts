@@ -35,20 +35,25 @@ export async function GET(
     });
 
     if (!patient && storageConfig.mode === "ephemeral-tmp" && isSheetsConfigured()) {
-      await hydrateDatabaseFromSheets(db).catch(() => {});
-      patient = await db.patient.findFirst({
-        where: { id, deletedAt: null },
-        include: {
-          appointments: { orderBy: { startsAt: "desc" } },
-          treatments: { orderBy: { date: "desc" } },
-          prescriptions: { include: { items: true }, orderBy: { date: "desc" } },
-          invoices: {
-            include: { items: true, payments: { orderBy: { paidAt: "desc" } } },
-            orderBy: { date: "desc" },
-          },
-          followUps: { orderBy: { dueDate: "asc" } },
-        },
+      const alreadyArchivedLocally = await db.patient.findFirst({
+        where: { id, deletedAt: { not: null } },
       });
+      if (!alreadyArchivedLocally) {
+        await hydrateDatabaseFromSheets(db).catch(() => {});
+        patient = await db.patient.findFirst({
+          where: { id, deletedAt: null },
+          include: {
+            appointments: { orderBy: { startsAt: "desc" } },
+            treatments: { orderBy: { date: "desc" } },
+            prescriptions: { include: { items: true }, orderBy: { date: "desc" } },
+            invoices: {
+              include: { items: true, payments: { orderBy: { paidAt: "desc" } } },
+              orderBy: { date: "desc" },
+            },
+            followUps: { orderBy: { dueDate: "asc" } },
+          },
+        });
+      }
     }
 
     return patient
@@ -161,8 +166,8 @@ export async function DELETE(
   const { id } = await params;
 
   try {
-    const existing = await db.patient.findFirst({
-      where: { id, deletedAt: null },
+    const existing = await db.patient.findUnique({
+      where: { id },
     });
     if (!existing) {
       return NextResponse.json(
@@ -170,16 +175,57 @@ export async function DELETE(
         { status: 404 }
       );
     }
+    if (existing.deletedAt !== null) {
+      // Idempotent: already archived
+      return NextResponse.json({ ok: true, alreadyArchived: true });
+    }
 
+    const now = new Date();
     await db.$transaction(async (tx) => {
+      // 1. Soft-delete / archive the patient
       await tx.patient.update({
         where: { id },
-        data: { deletedAt: new Date() },
+        data: { deletedAt: now },
       });
+
+      // 2. Cancel future/scheduled appointments for this archived patient
+      await tx.appointment.updateMany({
+        where: {
+          patientId: id,
+          status: { in: ["SCHEDULED", "CONFIRMED"] },
+        },
+        data: { status: "CANCELLED" },
+      });
+
+      // 3. Cancel pending follow-ups for this archived patient
+      await tx.followUp.updateMany({
+        where: {
+          patientId: id,
+          status: "PENDING",
+        },
+        data: { status: "CANCELLED" },
+      });
+
+      // 4. Cancel planned treatments (preserve completed procedures and history)
+      await tx.treatment.updateMany({
+        where: {
+          patientId: id,
+          status: "PLANNED",
+        },
+        data: { status: "CANCELLED" },
+      });
+
+      // 5. Prescriptions, invoices, and payments are strictly preserved for clinical and financial compliance
+
+      // 6. Stage Google Sheets sync for Patient archive tombstone
+      await queueRecord(tx, "Patient", id, id);
       await logAudit(tx, "ARCHIVE", "Patient", id);
     });
 
-    return NextResponse.json({ ok: true });
+    // Write-through to Google Sheets immediately on serverless so the tombstone is authoritative
+    await syncAfterWriteOnServerless("Patient", id);
+
+    return NextResponse.json({ ok: true, archivedAt: now.toISOString() });
   } catch (error) {
     return handleApiError(error, "Unable to archive patient record.");
   }

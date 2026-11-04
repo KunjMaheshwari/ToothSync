@@ -1,7 +1,7 @@
 # Doctor Kinjal Maheshwari’s Patient Tracker — Project Context
 
 > Verified architectural and operational documentation. Contains **no** real patient details, credentials, tokens, or secret values.
-> Updated: 2026-11-04 (Production Profile Failure Audit & Storage Hardening).
+> Updated: 2026-11-04 (Patient Archival Lifecycle & Google Sheets Tombstone Hardening).
 
 ---
 
@@ -63,7 +63,7 @@ The entire clinic interface operates as a responsive single-page clinical consol
 - In deployment `f-tK-V8CnBlDfhcwE8n-S` (commits `bcf8592`, `aa769f3`, `60f130b`), API requests to `/api/dashboard` and `POST /api/patients` failed with HTTP 500 because the default SQLite path pointed to `/var/task/prisma/dev.db` on a read-only serverless filesystem.
 - Mitigated temporarily by redirecting Vercel serverless SQLite to `file:/tmp/dentalcare.db` with auto-DDL schema initialization and error handling.
 
-### C. Current Incident: Patient Profile Loading Failure
+### C. Patient Profile Loading Failure Incident
 - **Symptom:** The patient list rendered, but clicking any patient profile displayed:
   `Could not load patient profile.`
 - **Root Cause Identified & Replicated:**
@@ -77,6 +77,19 @@ The entire clinic interface operates as a responsive single-page clinical consol
   - Prevented silent ephemeral database split-brains in production: unconfigured Vercel environments return an explicit `503 Service Unavailable` with `DATABASE_NOT_CONFIGURED` instead of creating isolated `/tmp` databases.
   - Created `lib/client-errors.ts` for descriptive, PHI-free UI feedback on network/session/record status.
 
+### D. Patient Deletion Reappearance Bug Incident
+- **Symptom:** When a patient was deleted, the UI initially removed the patient, but after 3–4 seconds, the same patient reappeared.
+- **Root Cause Identified & Replicated:**
+  - Google Sheets `Patients` tab only contained 16 columns (`Record ID` through `Updated At`), lacking any archival or deletion marker.
+  - Cold starts or multi-container serverless re-hydration invoked `hydrateDatabaseFromSheets()`, reading all rows and executing `prisma.patient.upsert()`, resurrecting archived patients as active (`deletedAt: null`).
+  - `DELETE /api/patients/[id]` was not synchronizing tombstones to Google Sheets and left scheduled appointments/recalls active.
+- **Resolution:**
+  - Expanded Google Sheets `Patients` tab to 17 columns with `"Archived At"` tombstone.
+  - Updated `ensureTab` for non-destructive header expansion.
+  - Updated `hydrateDatabaseFromSheets` to parse column 17 and preserve `deletedAt`.
+  - Enforced transactional soft-deletion cascading to cancel upcoming appointments, pending follow-ups, and planned treatments while strictly preserving clinical and billing history.
+  - Updated UI with immediate optimistic removal and safe rollback.
+
 ---
 
 ## 5. Google Sheets Integration Architecture
@@ -87,18 +100,20 @@ The entire clinic interface operates as a responsive single-page clinical consol
   - Serverless environment immediately triggers `syncAfterWriteOnServerless()`, attempting direct append/update to Google Sheets with automatic status promotion to `SYNCED`.
   - If network or API limits interrupt sync, records remain in `SyncQueue` with exponential backoff (`nextAttemptAt`) for retry during scheduled or manual `/api/sync` calls.
 - **Tab Layout & Keying:**
-  - Tabs: `Patients`, `Appointments`, `Treatments`, `Prescriptions`, `Invoices`, `Payments`, `Follow-ups`.
+  - Tabs: `Patients` (17 columns with `Archived At` tombstone), `Appointments`, `Treatments`, `Prescriptions`, `Invoices`, `Payments`, `Follow-ups`.
   - Column A is always the authoritative Prisma database `Record ID` (cuid).
   - Row lookups inspect Column A: existing IDs are updated in-place; new IDs are appended.
+  - Archived tombstones in Column 17 prevent resurrection during hydration.
   - The application code contains zero destructive deletion operations (`deleteSheet`, `deleteDimension`, `batchClear` are absent).
 
 ---
 
 ## 6. QA & Test Coverage
 
-- **Total Automated Test Suites:** 17 test suites
-- **Total Test Cases:** 107 tests (100% passing)
+- **Total Automated Test Suites:** 19 test suites
+- **Total Test Cases:** 111 tests (100% passing)
 - **Key Test Areas Covered:**
+  - Patient archival lifecycle, cascade cancellations, and Google Sheets tombstone hydration (`tests/patient-archive-lifecycle.test.ts`)
   - End-to-end clinical workflows (patients, appointments, treatments, prescriptions, follow-ups)
   - Financial calculations, tax/discount paise rounding, and payment balance invariants
   - Google Sheets synchronization retry, queue ordering, and error isolation

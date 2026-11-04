@@ -4,16 +4,17 @@
 > Application: Doctor Kinjal Maheshwari's Patient Tracker  
 > Repository: `KunjMaheshwari/ToothSync` (branch `main`)  
 > Target: Vercel Production (`https://doctor-kinjal.vercel.app/`)  
+> Status: **ALL VALIDATIONS PASSED (19 Test Suites, 111 Tests)**
 
 ---
 
 ## 1. Overview & Verification Status
 
-This report details the architectural hardening, regression testing, and deployment verification for Doctor Kinjal Maheshwari's Patient Tracker.
+This report details the architectural audit, patient archive lifecycle fix, and pre-deployment verification for Doctor Kinjal Maheshwari's Patient Tracker.
 
 - **TypeScript Compilation:** Clean (`npx tsc --noEmit` -> exit code 0)
 - **ESLint Code Quality:** Clean (`npm run lint` -> exit code 0)
-- **Automated Test Suite:** 107 tests passing across 17 test files (`CI=true npm test` -> exit code 0)
+- **Automated Test Suite:** 111 tests passing across 19 test files (`CI=true npm test` -> exit code 0)
 - **Next.js Production Build:** Clean build (`npm run build` -> exit code 0)
 - **Git Working Tree:** Clean, no secrets or database files committed
 
@@ -23,16 +24,11 @@ This report details the architectural hardening, regression testing, and deploym
 
 | File | Changes Made |
 |---|---|
-| `lib/db.ts` | Added `@prisma/adapter-libsql` driver adapter support; implemented `resolveStorageConfig()` to select between libSQL remote storage and local SQLite; prohibited unconfigured ephemeral `/tmp` fallback in Vercel production by failing fast with `DatabaseNotConfiguredError` (`503`). |
-| `prisma/schema.prisma` | Enabled `previewFeatures = ["driverAdapters"]` under client generator. |
-| `next.config.ts` | Configured `serverExternalPackages` with `@prisma/adapter-libsql`, `@libsql/client`, and `libsql` to prevent Webpack bundling errors. |
-| `lib/api.ts` | Added custom error mapping for `DATABASE_NOT_CONFIGURED` (`503`), `P2002` (`409`), `P2025` (`404`), and `P2003` (`400`). |
-| `lib/client-errors.ts` | Created centralized, PHI-free client error mapping function (`describeProfileLoadFailure`) differentiating session expiry, not found, unconfigured database, and offline network errors. |
-| `components/clinic-app.tsx` | Updated `openPatientDetail` to parse response JSON and use `describeProfileLoadFailure` rather than suppressing errors with a generic toast. |
-| `app/api/sync/route.ts` | Added storage mode status reporting in `GET /api/sync`; restricted cold-start hydration to explicit ephemeral mode. |
-| `scripts/migrate-to-durable-db.ts` | Created non-destructive migration script to copy existing clinic records from SQLite (`prisma/dev.db`) to the remote durable libSQL database. |
-| `tests/profile-durable-storage.test.ts` | Added 11 regression tests verifying dual-instance profile consistency, libSQL adapter functionality, error codes, and serverless guard. |
-| `PROJECT_CONTEXT.md` | Comprehensive update with the full architectural and operational context. |
+| `lib/sheets.ts` | Added 17th column `"Archived At"` to `Patients` tab schema in `buildSheetRecord()`; updated `ensureTab()` to non-destructively expand existing 16-column header rows to 17 columns in-place; updated `hydrateDatabaseFromSheets()` to parse `r[16]` and preserve `deletedAt` during container hydration, preventing deleted patient resurrection; updated `reconcileEntitySheet()` to recognize archived tombstones. |
+| `app/api/patients/[id]/route.ts` | In `GET`, added immediate 404 return when `deletedAt` is non-null without attempting to re-hydrate from Sheets; in `DELETE`, implemented idempotency check (`alreadyArchived: true`), transactional cascade cancellation of scheduled appointments, pending follow-ups, and planned treatments while strictly preserving completed clinical records and financial invoices/payments; staged sync queue record and triggered immediate `syncAfterWriteOnServerless()`. |
+| `components/clinic-app.tsx` | Updated `handleArchivePatient` to optimistically remove the deleted patient from local state (`setPatients`) immediately, close the profile modal, and gracefully roll back with an error toast if the backend delete fails. |
+| `tests/patient-archive-lifecycle.test.ts` | Created dedicated regression test suite covering soft-delete, appointment/follow-up cancellation, financial invoice preservation, Google Sheets 17-column tombstone row generation, hydration resurrection prevention, and delete idempotency. |
+| `reports/` & `PROJECT_CONTEXT.md` | Comprehensive documentation of root-cause analysis, full application audit, regression tests, and Google Sheets sync verification. |
 
 ---
 
@@ -41,7 +37,7 @@ This report details the architectural hardening, regression testing, and deploym
 ### A. TypeScript Type Check
 ```bash
 $ npx tsc --noEmit
-# Exit code: 0
+# Exit code: 0 (0 errors)
 ```
 
 ### B. Linting
@@ -57,27 +53,30 @@ $ npm run lint
 $ CI=true npm test
  RUN  v3.2.7 /Users/kunjmaheshwari/Documents/ChatGPT/Doctor Kinjal
 
- ✓ tests/e2e/google-sheets-sync.spec.ts (10 tests)
  ✓ tests/e2e/payments.spec.ts (8 tests)
- ✓ tests/e2e/billing.spec.ts (8 tests)
- ✓ tests/e2e/treatments.spec.ts (6 tests)
- ✓ tests/e2e/appointments.spec.ts (6 tests)
- ✓ tests/production-incident-reliability.test.ts (5 tests)
  ✓ tests/profile-durable-storage.test.ts (11 tests)
+ ✓ tests/e2e/google-sheets-sync.spec.ts (10 tests)
+ ✓ tests/e2e/billing.spec.ts (8 tests)
+ ✓ tests/e2e/appointments.spec.ts (6 tests)
+ ✓ tests/e2e/treatments.spec.ts (6 tests)
+ ✓ tests/production-incident-reliability.test.ts (5 tests)
  ✓ tests/e2e/patients.spec.ts (8 tests)
- ✓ tests/finance-billing.test.ts (4 tests)
+ ✓ tests/e2e/ten-data-types.test.ts (1 test)
  ✓ tests/api-integration.test.ts (4 tests)
  ✓ tests/e2e/authentication.spec.ts (4 tests)
+ ✓ tests/finance-billing.test.ts (4 tests)
  ✓ tests/sync-worker.test.ts (2 tests)
+ ✓ tests/patient-archive-lifecycle.test.ts (3 tests)
  ✓ tests/ui-branding.test.ts (4 tests)
  ✓ tests/validation.test.ts (14 tests)
  ✓ tests/sheets.test.ts (5 tests)
  ✓ tests/security.test.ts (4 tests)
  ✓ tests/patient-search.test.ts (4 tests)
 
- Test Files  17 passed (17)
-      Tests  107 passed (107)
-   Duration  8.49s
+ Test Files  19 passed (19)
+      Tests  111 passed (111)
+   Duration  8.93s
+# Exit code: 0
 ```
 
 ### D. Production Next.js Build
@@ -88,7 +87,7 @@ $ npm run build
 
 ✔ Generated Prisma Client (v6.19.3) to ./node_modules/@prisma/client
    ▲ Next.js 15.5.28
- ✓ Compiled successfully
+ ✓ Compiled successfully in 1485ms
  ✓ Linting and checking validity of types
  ✓ Generating static pages (14/14)
  ✓ Finalizing page optimization
@@ -97,31 +96,12 @@ $ npm run build
 
 ---
 
-## 4. Runbook for Finalizing Production Setup
+## 4. Deployment Verification & Rollout Plan
 
-To complete the transition of `https://doctor-kinjal.vercel.app/` to durable shared storage:
-
-1. **Create Turso Database:**
-   ```bash
-   turso db create doctor-kinjal-prod
-   turso db show doctor-kinjal-prod --url
-   turso db tokens create doctor-kinjal-prod
-   ```
-2. **Add Environment Variables in Vercel Project Settings:**
-   - `TURSO_DATABASE_URL`: `libsql://doctor-kinjal-prod-<org>.turso.io`
-   - `TURSO_AUTH_TOKEN`: `<turso-jwt-token>`
-3. **Migrate Existing Clinic Records to Turso:**
-   Run the migration script using the preserved local `prisma/dev.db` file:
-   ```bash
-   SOURCE_DATABASE_URL="file:./prisma/dev.db" \
-   TURSO_DATABASE_URL="libsql://doctor-kinjal-prod-<org>.turso.io" \
-   TURSO_AUTH_TOKEN="<turso-jwt-token>" \
-   npx tsx scripts/migrate-to-durable-db.ts --apply
-   ```
-4. **Deploy Commit to `main`:**
-   Push the validated changes to GitHub `KunjMaheshwari/ToothSync`. Vercel will build and deploy the production release.
-5. **Post-Deploy Sanity Checks:**
-   - Sign in to `https://doctor-kinjal.vercel.app/login` with practice credentials.
-   - Verify that the Dashboard and Patient list display the migrated records.
-   - Open a patient profile to confirm that the patient profile loads smoothly without the generic error toast.
-
+1. **Commit and Push:**
+   - Commit changes to `main` branch on GitHub repository `KunjMaheshwari/ToothSync`.
+   - Vercel automatically detects the push and initiates a production deployment.
+2. **Health Check Verification:**
+   - Verify `GET /api/dashboard` returns 200 with valid dashboard summary.
+   - Verify `GET /api/patients` returns active patient list and excludes archived patients.
+   - Verify deletion of a test patient immediately disappears from UI and does not reappear after 3–4 seconds or subsequent refreshes.

@@ -4360,14 +4360,27 @@ export default function ClinicApp() {
 
     async function handleArchivePatient() {
       if (!p) return;
-      const r = await fetch(`/api/patients/${p.id}`, { method: "DELETE" });
-      if (r.ok) {
-        pushToast(`Archived ${p.firstName} ${p.lastName}.`);
-        setActivePatientId(null);
-        setActivePatientDetail(null);
-        await Promise.all([loadPatients(q), refreshDashboard()]);
-      } else {
-        pushToast("Unable to archive patient.", "error");
+      const targetId = p.id;
+      const targetName = `${p.firstName} ${p.lastName}`;
+
+      // Optimistically remove from patients list and close modal
+      setPatients((prev) => prev.filter((item) => item.id !== targetId));
+      setActivePatientId(null);
+      setActivePatientDetail(null);
+      setConfirmArchive(false);
+
+      try {
+        const r = await fetch(`/api/patients/${targetId}`, { method: "DELETE" });
+        if (r.ok) {
+          pushToast(`Archived ${targetName}.`);
+          await Promise.all([loadPatients(q), refreshDashboard()]);
+        } else {
+          pushToast("Unable to archive patient.", "error");
+          await loadPatients(q);
+        }
+      } catch {
+        pushToast("Network error while archiving patient.", "error");
+        await loadPatients(q);
       }
     }
 

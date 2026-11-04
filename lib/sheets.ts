@@ -62,6 +62,7 @@ export function buildSheetRecord(entity: string, value: any): SheetRecord {
           "Consented",
           "Registered At",
           "Updated At",
+          "Archived At",
         ],
         id: value.id,
         values: [
@@ -81,6 +82,7 @@ export function buildSheetRecord(entity: string, value: any): SheetRecord {
           String(Boolean(value.consented)),
           iso(value.registeredAt),
           iso(value.updatedAt ?? new Date()),
+          iso(value.deletedAt),
         ],
       };
 
@@ -333,6 +335,17 @@ export async function ensureTab(
       requestBody: { values: [headers] },
     });
   } else if (
+    current.length < headers.length &&
+    current.every((header, index) => header === headers[index])
+  ) {
+    // Non-destructive forward-compatible header expansion (e.g. adding Archived At tombstone)
+    await sheets.spreadsheets.values.update({
+      spreadsheetId,
+      range: `'${tab}'!1:1`,
+      valueInputOption: "RAW",
+      requestBody: { values: [headers] },
+    });
+  } else if (
     current.length !== headers.length ||
     current.some((header, index) => header !== headers[index])
   ) {
@@ -496,6 +509,13 @@ export function reconcileEntitySheet(
   for (const row of rows) {
     const rowId = String(row[0] ?? "").trim();
     if (rowId && !knownDbIds.has(rowId) && !unexpectedIds.includes(rowId)) {
+      const archivedAt =
+        colIndex["Archived At"] !== undefined
+          ? row[colIndex["Archived At"]]
+          : null;
+      if (entity === "Patient" && archivedAt) {
+        continue;
+      }
       unexpectedIds.push(rowId);
     }
   }
@@ -658,6 +678,7 @@ export async function hydrateDatabaseFromSheets(
     const consented = String(r[13]).toLowerCase() === "true";
     const registeredAt = parseDateOrNow(r[14]);
     const updatedAt = parseDateOrNow(r[15]);
+    const archivedAt = parseDateOrNull(r[16]);
 
     if (!id || !phone) continue;
     try {
@@ -680,6 +701,7 @@ export async function hydrateDatabaseFromSheets(
           consented,
           registeredAt,
           updatedAt,
+          deletedAt: archivedAt,
         },
         update: {
           patientId,
@@ -696,6 +718,7 @@ export async function hydrateDatabaseFromSheets(
           dentalHistory,
           consented,
           updatedAt,
+          deletedAt: archivedAt,
         },
       });
       patientIds.add(id);
