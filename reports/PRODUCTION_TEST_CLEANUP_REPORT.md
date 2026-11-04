@@ -47,3 +47,4 @@ During local root-cause reproduction and regression test authoring, the followin
 ## 4. Integrity Confirmation
 
 The production environment remains unpolluted by audit fixtures. Existing real clinical records in production and the local backup (`prisma/dev.db`) were preserved with complete integrity.
+

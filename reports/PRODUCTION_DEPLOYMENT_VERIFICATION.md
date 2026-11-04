@@ -124,3 +124,4 @@ To complete the transition of `https://doctor-kinjal.vercel.app/` to durable sha
    - Sign in to `https://doctor-kinjal.vercel.app/login` with practice credentials.
    - Verify that the Dashboard and Patient list display the migrated records.
    - Open a patient profile to confirm that the patient profile loads smoothly without the generic error toast.
+

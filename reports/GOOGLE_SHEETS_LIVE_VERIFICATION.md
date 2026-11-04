@@ -66,3 +66,4 @@ The full sync worker suite (`tests/sync-worker.test.ts` and `tests/e2e/google-sh
 ## 5. Live Write Verification Status
 
 Because no dedicated test spreadsheet was provided and write tests against the live practice spreadsheet were skipped to preserve clinical integrity, live write and read-back verification is formally declared **NOT VERIFIED**.
+
