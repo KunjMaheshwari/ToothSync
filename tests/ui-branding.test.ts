@@ -25,6 +25,18 @@ describe("Doctor Kinjal Maheshwari's Patient Tracker UI & SSR Branding", () => {
     const html = renderToStaticMarkup(React.createElement(Login));
     expect(html).toContain("Doctor Kinjal Maheshwari&#x27;s Patient Tracker");
     expect(html).toContain("Welcome Doctor Kinjal Maheshwari");
+    expect(html).toContain("WELCOME TO YOUR DENTAL CARE");
+    expect(html).toContain("Your smile deserves thoughtful care.");
+    expect(html).toContain(
+      "A warm welcome to the practice of Dr. Kinjal Maheshwari, where every smile is treated with attention, compassion, and care."
+    );
+    expect(html).toContain(
+      "Your journey to a healthier, brighter smile begins here."
+    );
+    expect(html).toContain("Because every smile tells a story.");
+    expect(html).not.toContain("Precision care, designed with calm clarity");
+    expect(html).not.toContain("SQLite");
+    expect(html).not.toContain("Google Sheets");
   });
 
   it("renders ClinicApp SSR HTML with mandatory Dashboard greeting, subtitle, branding, and 7 compact stat labels", () => {
