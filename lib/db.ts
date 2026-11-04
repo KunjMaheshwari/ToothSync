@@ -232,13 +232,9 @@ const baseClient =
     },
   });
 
-let isInitializing = false;
-
 export async function ensureDatabaseReady(): Promise<void> {
-  if (isInitializing) return;
   if (!globalForPrisma.prismaInitPromise) {
     globalForPrisma.prismaInitPromise = (async () => {
-      isInitializing = true;
       try {
         await initializeSchemaOnClient(baseClient);
         const isEphemeralTmp = resolvedDatabaseUrl.startsWith("file:/tmp/");
@@ -253,8 +249,6 @@ export async function ensureDatabaseReady(): Promise<void> {
       } catch (err) {
         globalForPrisma.prismaInitPromise = null;
         throw err;
-      } finally {
-        isInitializing = false;
       }
     })();
   }

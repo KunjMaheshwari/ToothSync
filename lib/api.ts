@@ -66,10 +66,21 @@ export function logAudit(
  * Never exposes stack traces, connection strings, secrets, or patient PII.
  */
 export function handleApiError(
-  _error: unknown,
+  error: unknown,
   fallbackMessage = "Database service is temporarily unavailable. Please retry."
 ) {
-  return NextResponse.json({ error: fallbackMessage }, { status: 503 });
+  const errName = error instanceof Error ? error.name : "UnknownError";
+  const errCode =
+    error && typeof error === "object" && "code" in error
+      ? String((error as { code?: unknown }).code)
+      : undefined;
+  return NextResponse.json(
+    {
+      error: fallbackMessage,
+      code: errCode || errName,
+    },
+    { status: 503 }
+  );
 }
 
 /**
