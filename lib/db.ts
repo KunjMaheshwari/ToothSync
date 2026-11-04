@@ -53,10 +53,12 @@ export function resolveStorageConfig(
     };
   }
   if (env.VERCEL) {
-    if (clean(env.ALLOW_EPHEMERAL_DATABASE).toLowerCase() === "true") {
-      return { mode: "ephemeral-tmp", url: "file:/tmp/dentalcare.db", durable: false };
+    if (clean(env.ALLOW_EPHEMERAL_DATABASE).toLowerCase() === "false") {
+      return { mode: "unconfigured", url: "file:/tmp/dentalcare-unconfigured.db", durable: false };
     }
-    return { mode: "unconfigured", url: "file:/tmp/dentalcare-unconfigured.db", durable: false };
+    // When a remote database is not yet provided, fall back to ephemeral /tmp with
+    // Google Sheets synchronization and cold-start hydration so the clinic remains operational.
+    return { mode: "ephemeral-tmp", url: "file:/tmp/dentalcare.db", durable: false };
   }
   const url = resolveDatabaseUrl(env);
   return {

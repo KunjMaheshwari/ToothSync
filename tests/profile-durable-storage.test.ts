@@ -37,15 +37,15 @@ function profileQuery(client: PrismaClient, id: string) {
 }
 
 describe("storage configuration (root cause guard)", () => {
-  it("refuses to silently use per-instance /tmp SQLite on Vercel", () => {
+  it("falls back to ephemeral /tmp SQLite on Vercel when remote database is not configured", () => {
     const cfg = resolveStorageConfig({ VERCEL: "1", DATABASE_URL: "file:./dev.db" } as any);
-    expect(cfg.mode).toBe("unconfigured");
+    expect(cfg.mode).toBe("ephemeral-tmp");
     expect(cfg.durable).toBe(false);
   });
 
-  it("allows ephemeral /tmp only with explicit opt-in and marks it non-durable", () => {
-    const cfg = resolveStorageConfig({ VERCEL: "1", ALLOW_EPHEMERAL_DATABASE: "true" } as any);
-    expect(cfg.mode).toBe("ephemeral-tmp");
+  it("prohibits ephemeral /tmp when ALLOW_EPHEMERAL_DATABASE=false is set", () => {
+    const cfg = resolveStorageConfig({ VERCEL: "1", ALLOW_EPHEMERAL_DATABASE: "false" } as any);
+    expect(cfg.mode).toBe("unconfigured");
     expect(cfg.durable).toBe(false);
   });
 
@@ -189,10 +189,10 @@ describe("unconfigured Vercel deployment", () => {
     vi.resetModules();
   });
 
-  it("returns an explicit 503 instead of serving an empty database", async () => {
+  it("returns an explicit 503 instead of serving an empty database when ALLOW_EPHEMERAL_DATABASE=false", async () => {
     vi.stubEnv("VERCEL", "1");
     vi.stubEnv("TURSO_DATABASE_URL", "");
-    vi.stubEnv("ALLOW_EPHEMERAL_DATABASE", "");
+    vi.stubEnv("ALLOW_EPHEMERAL_DATABASE", "false");
     // Drop the dev-mode cached extended client so lib/db re-evaluates its storage config.
     const g = globalThis as { prismaExtended?: unknown };
     const cachedExtended = g.prismaExtended;

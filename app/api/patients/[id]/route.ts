@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
-import { db } from "@/lib/db";
+import { db, storageConfig } from "@/lib/db";
+import { hydrateDatabaseFromSheets, isSheetsConfigured } from "@/lib/sheets";
 import {
   handleApiError,
   logAudit,
@@ -19,7 +20,7 @@ export async function GET(
   if (denied) return denied;
   const { id } = await params;
   try {
-    const patient = await db.patient.findFirst({
+    let patient = await db.patient.findFirst({
       where: { id, deletedAt: null },
       include: {
         appointments: { orderBy: { startsAt: "desc" } },
@@ -32,6 +33,24 @@ export async function GET(
         followUps: { orderBy: { dueDate: "asc" } },
       },
     });
+
+    if (!patient && storageConfig.mode === "ephemeral-tmp" && isSheetsConfigured()) {
+      await hydrateDatabaseFromSheets(db).catch(() => {});
+      patient = await db.patient.findFirst({
+        where: { id, deletedAt: null },
+        include: {
+          appointments: { orderBy: { startsAt: "desc" } },
+          treatments: { orderBy: { date: "desc" } },
+          prescriptions: { include: { items: true }, orderBy: { date: "desc" } },
+          invoices: {
+            include: { items: true, payments: { orderBy: { paidAt: "desc" } } },
+            orderBy: { date: "desc" },
+          },
+          followUps: { orderBy: { dueDate: "asc" } },
+        },
+      });
+    }
+
     return patient
       ? NextResponse.json(patient)
       : NextResponse.json({ error: "Patient not found." }, { status: 404 });
