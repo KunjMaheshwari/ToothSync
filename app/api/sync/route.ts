@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { db } from "@/lib/db";
+import { db, storageConfig } from "@/lib/db";
 import { isAuthenticated } from "@/lib/auth";
 import { handleApiError } from "@/lib/api";
 import {
@@ -41,6 +41,7 @@ export async function GET() {
       synced,
       lastSync: last?.syncedAt ?? null,
       configured: isSheetsConfigured(),
+      storage: { mode: storageConfig.mode, durable: storageConfig.durable },
       jobs,
     });
   } catch (error) {
@@ -91,7 +92,7 @@ export async function POST(req: Request) {
 
     if (
       jobs.length === 0 &&
-      process.env.VERCEL &&
+      storageConfig.mode === "ephemeral-tmp" &&
       isSheetsConfigured() &&
       (await db.patient.count()) === 0
     ) {

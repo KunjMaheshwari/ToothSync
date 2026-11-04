@@ -34,6 +34,7 @@ import {
   X,
 } from "lucide-react";
 import { parseRupeesToPaise } from "@/lib/validation";
+import { describeProfileLoadFailure } from "@/lib/client-errors";
 import {
   auditInvoiceRecord,
   calculateInvoiceTotals,
@@ -282,12 +283,17 @@ export default function ClinicApp() {
       setPatientModalTab(initialTab);
       setLoadingPatientDetail(true);
       try {
-        const r = await fetch(`/api/patients/${id}`);
-        if (!r.ok) throw new Error("Unable to load patient record.");
+        const r = await fetch(`/api/patients/${encodeURIComponent(id)}`);
+        if (!r.ok) {
+          const body = await r.json().catch(() => null);
+          pushToast(describeProfileLoadFailure(r.status, body), "error");
+          setActivePatientId(null);
+          return;
+        }
         const detail = await r.json();
         setActivePatientDetail(detail);
       } catch {
-        pushToast("Could not load patient profile.", "error");
+        pushToast(describeProfileLoadFailure(0, null), "error");
         setActivePatientId(null);
       } finally {
         setLoadingPatientDetail(false);

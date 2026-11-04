@@ -1,7 +1,70 @@
 import fs from "node:fs";
 import path from "node:path";
 import { PrismaClient } from "@prisma/client";
+import { PrismaLibSQL } from "@prisma/adapter-libsql";
 import { hydrateDatabaseFromSheets, isSheetsConfigured } from "@/lib/sheets";
+
+/**
+ * Raised when the app runs on Vercel without a durable, shared database.
+ * Each serverless instance has a private, disposable /tmp, so a /tmp SQLite
+ * file cannot act as the clinic's system of record (root cause of the
+ * production "Could not load patient profile." incident).
+ */
+export class DatabaseNotConfiguredError extends Error {
+  code = "DATABASE_NOT_CONFIGURED";
+  constructor() {
+    super(
+      "A durable database is not configured for this deployment. Set TURSO_DATABASE_URL and TURSO_AUTH_TOKEN."
+    );
+    this.name = "DatabaseNotConfiguredError";
+  }
+}
+
+export type StorageMode = "libsql" | "sqlite-file" | "ephemeral-tmp" | "unconfigured";
+
+export interface StorageConfig {
+  mode: StorageMode;
+  /** URL used by Prisma (for libsql this is the remote URL; never logged). */
+  url: string;
+  authToken?: string;
+  /** True when every server instance reads and writes the same persistent store. */
+  durable: boolean;
+}
+
+function clean(raw: string | undefined): string {
+  return (raw ?? "").trim().replace(/^["']|["']$/g, "");
+}
+
+/**
+ * Decides where data lives. Production on Vercel must use a shared libSQL/Turso
+ * database; the old per-instance /tmp SQLite is only allowed with an explicit
+ * ALLOW_EPHEMERAL_DATABASE=true opt-in (never silently).
+ */
+export function resolveStorageConfig(
+  env: NodeJS.ProcessEnv = process.env
+): StorageConfig {
+  const libsqlUrl = clean(env.TURSO_DATABASE_URL || env.LIBSQL_DATABASE_URL);
+  if (libsqlUrl) {
+    return {
+      mode: "libsql",
+      url: libsqlUrl,
+      authToken: clean(env.TURSO_AUTH_TOKEN || env.LIBSQL_AUTH_TOKEN) || undefined,
+      durable: true,
+    };
+  }
+  if (env.VERCEL) {
+    if (clean(env.ALLOW_EPHEMERAL_DATABASE).toLowerCase() === "true") {
+      return { mode: "ephemeral-tmp", url: "file:/tmp/dentalcare.db", durable: false };
+    }
+    return { mode: "unconfigured", url: "file:/tmp/dentalcare-unconfigured.db", durable: false };
+  }
+  const url = resolveDatabaseUrl(env);
+  return {
+    mode: url.startsWith("file:/tmp/") ? "ephemeral-tmp" : "sqlite-file",
+    url,
+    durable: !url.startsWith("file:/tmp/"),
+  };
+}
 
 function isDirectoryWritable(dirPath: string): boolean {
   try {
@@ -12,12 +75,12 @@ function isDirectoryWritable(dirPath: string): boolean {
   }
 }
 
-export function resolveDatabaseUrl(): string {
-  const configuredUrl = process.env.DATABASE_URL?.trim();
-  const isVercel = Boolean(process.env.VERCEL);
+export function resolveDatabaseUrl(env: NodeJS.ProcessEnv = process.env): string {
+  const configuredUrl = env.DATABASE_URL?.trim();
+  const isVercel = Boolean(env.VERCEL);
   const isTest =
-    Boolean(process.env.VITEST) ||
-    process.env.NODE_ENV === "test" ||
+    Boolean(env.VITEST) ||
+    env.NODE_ENV === "test" ||
     Boolean(configuredUrl && configuredUrl.includes("test"));
 
   if (isTest && configuredUrl) {
@@ -51,9 +114,12 @@ export function resolveDatabaseUrl(): string {
   return configuredUrl;
 }
 
-const resolvedDatabaseUrl = resolveDatabaseUrl();
-if (!process.env.DATABASE_URL || process.env.VERCEL) {
-  process.env.DATABASE_URL = resolvedDatabaseUrl;
+export const storageConfig: StorageConfig = resolveStorageConfig();
+if (storageConfig.mode !== "libsql" && (!process.env.DATABASE_URL || process.env.VERCEL)) {
+  process.env.DATABASE_URL = storageConfig.url;
+} else if (!process.env.DATABASE_URL) {
+  // Prisma's schema references env("DATABASE_URL"); the libSQL adapter ignores it.
+  process.env.DATABASE_URL = "file:/tmp/prisma-placeholder.db";
 }
 
 const BOOTSTRAP_DDL_STATEMENTS: string[] = [
@@ -206,6 +272,7 @@ const BOOTSTRAP_DDL_STATEMENTS: string[] = [
 ];
 
 export async function initializeSchemaOnClient(client: PrismaClient): Promise<void> {
+  // Idempotent and additive only: never drops, truncates or rewrites data.
   for (const stmt of BOOTSTRAP_DDL_STATEMENTS) {
     await client.$executeRawUnsafe(stmt);
   }
@@ -216,34 +283,48 @@ export async function initializeSchemaOnClient(client: PrismaClient): Promise<vo
   );
 }
 
+/** Creates a Prisma client for the given storage configuration. */
+export function createPrismaClient(config: StorageConfig): PrismaClient {
+  if (config.mode === "libsql") {
+    const adapter = new PrismaLibSQL({ url: config.url, authToken: config.authToken });
+    return new PrismaClient({ adapter });
+  }
+  return new PrismaClient({ datasources: { db: { url: config.url } } });
+}
+
 const globalForPrisma = globalThis as unknown as {
   prismaBase?: PrismaClient;
   prismaExtended?: PrismaClient;
   prismaInitPromise?: Promise<void> | null;
 };
 
-const baseClient =
-  globalForPrisma.prismaBase ??
-  new PrismaClient({
-    datasources: {
-      db: {
-        url: resolvedDatabaseUrl,
-      },
-    },
-  });
+const baseClient = globalForPrisma.prismaBase ?? createPrismaClient(storageConfig);
 
 export async function ensureDatabaseReady(): Promise<void> {
+  if (storageConfig.mode === "unconfigured") {
+    throw new DatabaseNotConfiguredError();
+  }
   if (!globalForPrisma.prismaInitPromise) {
     globalForPrisma.prismaInitPromise = (async () => {
       try {
         await initializeSchemaOnClient(baseClient);
-        const isEphemeralTmp = resolvedDatabaseUrl.startsWith("file:/tmp/");
         const isTest =
           Boolean(process.env.VITEST) || process.env.NODE_ENV === "test";
-        if (isEphemeralTmp && !isTest && isSheetsConfigured()) {
+        // Only the explicitly opted-in ephemeral mode re-hydrates from Sheets.
+        // A durable database is never overwritten from the spreadsheet.
+        if (
+          storageConfig.mode === "ephemeral-tmp" &&
+          !isTest &&
+          isSheetsConfigured()
+        ) {
           const existingCount = await baseClient.patient.count();
           if (existingCount === 0) {
-            await hydrateDatabaseFromSheets(baseClient).catch(() => {});
+            await hydrateDatabaseFromSheets(baseClient).catch((e) => {
+              console.error(
+                "[db] Sheets hydration failed:",
+                e instanceof Error ? e.message.slice(0, 200) : "unknown"
+              );
+            });
           }
         }
       } catch (err) {

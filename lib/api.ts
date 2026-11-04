@@ -74,6 +74,35 @@ export function handleApiError(
     error && typeof error === "object" && "code" in error
       ? String((error as { code?: unknown }).code)
       : undefined;
+  if (errCode === "DATABASE_NOT_CONFIGURED") {
+    return NextResponse.json(
+      {
+        error:
+          "Patient records are unavailable: the clinic database is not configured for this deployment.",
+        code: errCode,
+      },
+      { status: 503 }
+    );
+  }
+  if (errCode === "P2002") {
+    return NextResponse.json(
+      { error: "A record with the same unique details already exists.", code: errCode },
+      { status: 409 }
+    );
+  }
+  if (errCode === "P2025") {
+    return NextResponse.json(
+      { error: "Record not found.", code: errCode },
+      { status: 404 }
+    );
+  }
+  if (errCode === "P2003") {
+    return NextResponse.json(
+      { error: "A related record does not exist.", code: errCode },
+      { status: 400 }
+    );
+  }
+  console.error("[api]", errCode || errName);
   return NextResponse.json(
     {
       error: fallbackMessage,
